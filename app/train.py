@@ -265,7 +265,7 @@ def train(file_re,batch_size,attention_type):
         # fast_dev_run=True,
         terminate_on_nan=True,
         # auto_lr_find=True,
-        use_amp=False,  # todo remove for gpu
+        # use_amp=False,  # todo remove for gpu
     )
 
     trainer.fit(model)
