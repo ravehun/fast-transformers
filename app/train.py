@@ -241,7 +241,8 @@ class TimeSeriesTransformer(pl.LightningModule):
 @click.option('--file-re', type=str, default='../data/sample_record_npz/*.npz', show_default=True, help="file regex")
 @click.option('--batch-size', type=int, default=2, show_default=True, help="batch size")
 @click.option('--attention-type', type=str, default='full', show_default=True, help="file regex")
-def train(file_re,batch_size,attention_type):
+@click.option('--gpus', type=int, default=0, show_default=True, help="gpu num")
+def train(file_re,batch_size,attention_type,gpus):
     torch.cuda.empty_cache()
     model = TimeSeriesTransformer(input_dimensions=5,
                                   file_re=file_re,
@@ -256,7 +257,8 @@ def train(file_re,batch_size,attention_type):
                                   batch_size=batch_size,
                                   seq_len=1500,
                                   seed=101,
-                                  lr=1e-7)
+                                  lr=1e-7,
+                                  gpus=gpus)
 
     trainer = pl.Trainer(
         max_epochs=100,
@@ -264,6 +266,7 @@ def train(file_re,batch_size,attention_type):
         # reload_dataloaders_every_epoch=True,
         # fast_dev_run=True,
         terminate_on_nan=True,
+        gpus=1,
         # auto_lr_find=True,
         # use_amp=False,  # todo remove for gpu
     )
