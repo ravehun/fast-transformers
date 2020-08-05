@@ -247,7 +247,8 @@ class TimeSeriesTransformer(pl.LightningModule):
 @click.option('--batch-size', type=int, default=2, show_default=True, help="batch size")
 @click.option('--attention-type', type=str, default='full', show_default=True, help="file regex")
 @click.option('--gpus', type=int, default=None, show_default=True, help="gpu num")
-def train(file_re,batch_size,attention_type,gpus):
+@click.option('--accumulate_grad_batches', type=int, default=1, show_default=True, help="update with N batches")
+def train(file_re,batch_size,attention_type,gpus,accumulate_grad_batches):
     torch.cuda.empty_cache()
     model = TimeSeriesTransformer(input_dimensions=5,
                                   file_re=file_re,
@@ -274,6 +275,7 @@ def train(file_re,batch_size,attention_type,gpus):
         gpus=gpus,
         # auto_lr_find=True,
         # use_amp=False,  # todo remove for gpu
+        accumulate_grad_batches=accumulate_grad_batches
     )
 
     trainer.fit(model)
