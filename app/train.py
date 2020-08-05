@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")
 
 import math
 import random
-
+tor
 import pandas as pd
 from torch import functional as F
 from torch.utils.data import DataLoader, IterableDataset
@@ -164,12 +164,18 @@ class TimeSeriesTransformer(pl.LightningModule):
         self.num_workers = num_workers
         # self.metric = MaskedABE()
 
+    def get_device(self):
+        if torch.cuda.is_available():
+            return 'gpu'
+        else:
+            return 'cpu'
+
     def forward(self, x, meta):
         ar = torch.arange(self.seq_len).float().type_as(x)
         relative_pos = self.positional_encoder(ar).unsqueeze(0).repeat(
             [x.shape[0], 1, 1])
 
-        att_mask = TriangularCausalMask(self.seq_len)
+        att_mask = TriangularCausalMask(self.seq_len, self.get_device())
         seq_mask = (x[..., 0] > 0).sum(dim=1).long()
         seq_mask = LengthMask(seq_mask, max_len=self.seq_len)
 
