@@ -165,7 +165,7 @@ class TimeSeriesTransformer(pl.LightningModule):
 
     def get_device(self):
         if torch.cuda.is_available():
-            return 'gpu'
+            return 'cuda'
         else:
             return 'cpu'
 
