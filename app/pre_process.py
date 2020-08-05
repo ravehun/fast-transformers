@@ -62,7 +62,8 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
                 r_target.append(targets)
                 r_stock_name.append(stock_name)
         except:
-            traceback.print_exc()
+            # traceback.print_exc()
+            pass
 
     if len(r_input) == 0:
         raise ValueError("no data input")
