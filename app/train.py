@@ -12,7 +12,6 @@ warnings.filterwarnings("ignore")
 
 import math
 import random
-tor
 import pandas as pd
 from torch import functional as F
 from torch.utils.data import DataLoader, IterableDataset
