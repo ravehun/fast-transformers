@@ -178,7 +178,7 @@ def setup_package():
         packages=find_packages(exclude=["docs", "tests", "scripts", "examples"]),
         ext_modules=get_extensions(),
         cmdclass={"build_ext": BuildExtension},
-        install_requires = ['click', 'tqdm', 'pytorch==1.5.1', 'git+https://github.com/LiyuanLucasLiu/RAdam.git', 'pytorch-lightning']
+        install_requires = ['click', 'tqdm', 'pytorch==1.5.1', 'pytorch-lightning']
     )
 
 
