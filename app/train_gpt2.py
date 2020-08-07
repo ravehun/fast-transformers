@@ -259,6 +259,7 @@ class TimeSeriesTransformer(pl.LightningModule):
 
         self.transformer = GPT2Model(config=config)
 
+    @property
     def get_device(self):
         if torch.cuda.is_available():
             return 'cuda'

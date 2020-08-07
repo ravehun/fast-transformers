@@ -52,7 +52,9 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
             if max_seq_len > x.shape[0] > min_seq_len:
                 inputs = np.concatenate([x, np.zeros([1, len(feature)])], axis=0).astype(np.float32)
                 targets = np.concatenate([np.zeros(1), x[:, 3]], axis=0).astype(np.float32).tolist()
-                days_offset = df.days_offset.values
+                days_offset = np.concatenate([np.zeros(1), df.days_offset], axis=0).astype(np.float32)
+
+
                 # TODO padding front
                 def pad(x, sd=[]):
                     return np.pad(x, [(0, max_seq_len - df.shape[0] - 1)] + sd, constant_values=0.0)
@@ -78,6 +80,7 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
         "stock_name": np.stack(r_stock_name, 0),
         "days_offset": np.stack(r_days_offset, 0),
     }
+    print([f"{k}: {v.shape}" for (k, v) in data.items()])
 
     np.savez(output_fn, **data)
 
