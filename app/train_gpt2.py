@@ -22,70 +22,100 @@ import torch.nn as nn
 
 from common_utils import CommonUtils
 
-
-class MaskedMetric(Metric):
-    def __init__(self, metric_func, name):
-        self.func = metric_func
-        super(MaskedMetric, self).__init__(name)
-
-    def forward(self,
-                pred: torch.Tensor,
-                target: torch.Tensor,
-                mask: torch.Tensor = None,
-                eps=1e-6,
-                reduction=True,
-                *args,
-                **kwargs
-                ) -> torch.Tensor:
-        if len(pred.shape) != 2:
-            raise ValueError("pred dim needs to be 2")
-        if mask is None:
-            mask = (target > 0)
-        mask = mask.float()
-        metric = None
-        if mask.sum() == 0:
-            metric = torch.zeros(pred.shape[0])
-        else:
-            metric = self.func(pred, target)
-            metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
-            if reduction:
-                metric = metric.mean()
-
-        return metric
+from loss import *
 
 
-class MaskedRMSLE(MaskedMetric):
-    def __init__(self):
-        super(MaskedRMSLE, self).__init__(self.rsmle, "MaskRmsle")
-
-    @staticmethod
-    def rsmle(pred, target):
-        return torch.log((pred - target).abs() + 1) - torch.log(target + 1)
-
-
-class SeqGroupMetric(MaskedMetric):
-    TRAIN = 1
-    VALID = 2
-    PAD = 0
-
-    def forward(self,
-                pred,
-                target,
-                meta=None,
-                eps=1e-6,
-                reduction=True,
-                *args, **kwargs):
-        group = meta["group"]
-        train_mask = (group == SeqGroupMetric.TRAIN)
-        valid_mask = (group == SeqGroupMetric.VALID)
-        train_loss = super(SeqGroupMetric, self).forward(pred, target, train_mask, reduction=reduction)
-        with torch.no_grad():
-            valid_loss = super(SeqGroupMetric, self).forward(pred, target, valid_mask, reduction=reduction)
-
-        return {
-            "train_loss": train_loss,
-            "valid_loss": valid_loss,
-        }
+#
+# class MaskedMetric(Metric):
+#     def __init__(self, metric_func, name):
+#         self.func = metric_func
+#         super(MaskedMetric, self).__init__(name)
+#
+#     def forward(self,
+#                 pred: torch.Tensor,
+#                 target: torch.Tensor,
+#                 mask: torch.Tensor = None,
+#                 eps=1e-6,
+#                 reduction=True,
+#                 *args,
+#                 **kwargs
+#                 ) -> torch.Tensor:
+#         if len(pred.shape) != 2:
+#             raise ValueError("pred dim needs to be 2")
+#         if mask is None:
+#             mask = (target > 0)
+#         mask = mask.float()
+#         metric = None
+#         if mask.sum() == 0:
+#             metric = torch.zeros(pred.shape[0])
+#         else:
+#             metric = self.func(pred, target)
+#             metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
+#             if reduction:
+#                 metric = metric.mean()
+#
+#         return metric
+#
+#
+# class MaskedRMSLE(MaskedMetric):
+#     def __init__(self):
+#         super(MaskedRMSLE, self).__init__(self.rsmle, "MaskRmsle")
+#
+#     @staticmethod
+#     def rsmle(pred, target):
+#         return torch.log((pred - target).abs() + 1) - torch.log(target + 1)
+#
+#
+# class SeqGroupMetric(MaskedMetric):
+#     TRAIN = 1
+#     VALID = 2
+#     PAD = 0
+#
+#     def forward(self,
+#                 pred,
+#                 target,
+#                 meta=None,
+#                 eps=1e-6,
+#                 reduction=True,
+#                 *args, **kwargs):
+#         group = meta["group"]
+#         train_mask = (group == SeqGroupMetric.TRAIN)
+#         valid_mask = (group == SeqGroupMetric.VALID)
+#         train_loss = super(SeqGroupMetric, self).forward(pred, target, train_mask, reduction=reduction)
+#         with torch.no_grad():
+#             valid_loss = super(SeqGroupMetric, self).forward(pred, target, valid_mask, reduction=reduction)
+#
+#         return {
+#             "train_loss": train_loss,
+#             "valid_loss": valid_loss,
+#         }
+#
+#
+# class MaskedMLABE(SeqGroupMetric):
+#     def __init__(self):
+#         super(MaskedMLABE, self).__init__(self.mlabe, "MaskMeanLogAbsoluteBoostError")
+#
+#     @staticmethod
+#     def mlabe(pred, target, eps=1e-6):
+#         return torch.log(((pred - target) / (target + eps)).abs())
+#
+#
+# class MaskedAPE(MaskedMetric):
+#     def __init__(self):
+#         super(MaskedAPE, self).__init__(self.ape, "MaskAPE")
+#
+#     @staticmethod
+#     def ape(pred, target, eps=1e-6):
+#         return 100 * abs((pred - target) / (target + eps))
+#
+#
+# class APE(SeqGroupMetric):
+#     def __init__(self):
+#         super(APE, self).__init__(self.ape, "MaskAPE")
+#
+#     @staticmethod
+#     def ape(pred, target, eps=1e-6):
+#         return 100 * abs((pred - target) / (target + eps))
 
 
 class MyIterableDataset(IterableDataset):
@@ -166,24 +196,6 @@ class ToTensor():
         return self.__class__.__name__ + '()'
 
 
-class MaskedAPE(MaskedMetric):
-    def __init__(self):
-        super(MaskedAPE, self).__init__(self.ape, "MaskAPE")
-
-    @staticmethod
-    def ape(pred, target, eps=1e-6):
-        return 100 * abs((pred - target) / (target + eps))
-
-
-class APE(SeqGroupMetric):
-    def __init__(self):
-        super(APE, self).__init__(self.ape, "MaskAPE")
-
-    @staticmethod
-    def ape(pred, target, eps=1e-6):
-        return 100 * abs((pred - target) / (target + eps))
-
-
 class PositionalEncoding(nn.Module):
     "Encode the position with a sinusoid."
 
@@ -224,10 +236,11 @@ class TimeSeriesTransformer(pl.LightningModule):
         self.model_projection = nn.Linear(input_dimensions, project_dimension)
         self.positional_encoder = PositionalEncoding(project_dimension)
         self.seq_len = seq_len
-        self.loss = APE()
+        self.loss = MaskedMLABE()
+        # self.loss = APE()
         self.file_re = file_re
         self.batch_size = batch_size
-        self.metric_object = APE()
+        self.metric_object = MaskedAPE()
         self.output_projection = nn.Linear(n_heads * value_dimensions, 1)
         # self.output_projection = nn.Conv1d(n_heads * value_dimensions, 1, 1)
         if type(file_re) != dict:
@@ -318,13 +331,25 @@ class TimeSeriesTransformer(pl.LightningModule):
         pred = self(x, meta)
         pred = pred.squeeze(-1)
         output = self.loss.forward(pred, y, meta)
-        log = {"train_loss": output["train_loss"], "valid_loss": output["valid_loss"]}
 
-        return {
+        log = {
+            "train_loss": output["train_loss"]
+            , "valid_loss": output["valid_loss"]
+        }
+
+        ret = {
             'loss': output["train_loss"],
             "valid_loss": output["valid_loss"],
             "log": log,
         }
+
+        if self.metric_object is not None:
+            with torch.no_grad():
+                metricAPE = self.metric_object.forward(pred, y, output['valid_mask'])
+                log["APE"] = metricAPE
+                ret["APE"] = metricAPE
+
+        return ret
 
     def training_epoch_end(
             self,
@@ -332,35 +357,9 @@ class TimeSeriesTransformer(pl.LightningModule):
     ):
         train_loss = torch.stack([x["loss"] for x in outputs]).mean()
         valid_loss = torch.stack([x["valid_loss"] for x in outputs]).mean()
-        print(f"train loss: {train_loss}, valid_loss: {valid_loss}")
+        APE = torch.stack([x["APE"] for x in outputs]).mean()
+        print(f"train loss: {train_loss}, valid_loss: {valid_loss}, APE:{APE}")
         return {"train_loss": train_loss, "val_loss": valid_loss}
-
-    #
-    # def validation_step(self, batch, batch_nb):
-    #     x, y, meta = batch
-    #     y_hat = self(x, meta)
-    #     loss = self.loss.forward(y_hat, y)
-    #     mae = self.metric_object(y_hat, y)
-    #     log = {"val_loss": loss, 'mae': mae}
-    #     return {
-    #         'val_loss': loss,
-    #         'mae': mae,
-    #         'log': log
-    #     }
-
-    # def validation_epoch_end(self, outputs):
-    #
-    #     if len(outputs) > 0:
-    #
-    #         val_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
-    #         mae = torch.stack([x["mae"] for x in outputs]).mean()
-    #
-    #
-    #     else:
-    #         val_loss = torch.Tensor(0)
-    #         mae = torch.Tensor(0)
-    #     print(f"epoch {self.current_epoch}, val_loss {val_loss}, mae {mae}")
-    #     return {"val_loss": val_loss}
 
     def configure_optimizers(self):
         # from radam import RAdam
@@ -413,13 +412,10 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         gradient_clip_val=2.5,
         accumulate_grad_batches=accumulate_grad_batches,
         # precision=16,
-        tpu_cores=8
+        # tpu_cores=8
     )
 
     trainer.fit(model)
-
-    import seaborn as sns
-    sns.heatmap()
 
 
 if __name__ == "__main__":
