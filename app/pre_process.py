@@ -50,10 +50,9 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
             df = df[(df.Date >= train_date) & (df.Date < valid_date)]
             x = df[feature].values
             if max_seq_len > x.shape[0] > min_seq_len:
-                inputs = np.concatenate([x, np.zeros([1, len(feature)])], axis=0).astype(np.float32)
-                targets = np.concatenate([np.zeros(1), x[:, 3]], axis=0).astype(np.float32).tolist()
+                inputs = np.concatenate([np.zeros([1, len(feature)]), x], axis=0).astype(np.float32)
+                targets = np.concatenate([x[:, 3], np.zeros(1), ], axis=0).astype(np.float32).tolist()
                 days_offset = np.concatenate([np.zeros(1), df.days_offset], axis=0).astype(np.float32)
-
 
                 # TODO padding front
                 def pad(x, sd=[]):

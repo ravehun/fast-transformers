@@ -32,21 +32,24 @@ class MaskedMetric(Metric):
                 pred: torch.Tensor,
                 target: torch.Tensor,
                 mask: torch.Tensor = None,
-                eps=1e-5,
+                eps=1e-6,
+                reduction=True,
                 *args,
                 **kwargs
                 ) -> torch.Tensor:
         if len(pred.shape) != 2:
             raise ValueError("pred dim needs to be 2")
         if mask is None:
-            mask = (target > 0).float() / mask.shape[1]
+            mask = (target > 0)
+        mask = mask.float()
         metric = None
         if mask.sum() == 0:
             metric = torch.zeros(pred.shape[0])
         else:
             metric = self.func(pred, target)
             metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
-            metric = metric.mean()
+            if reduction:
+                metric = metric.mean()
 
         return metric
 
@@ -57,7 +60,7 @@ class MaskedRMSLE(MaskedMetric):
 
     @staticmethod
     def rsmle(pred, target):
-        return mse(torch.log(pred + 1), torch.log(target + 1))
+        return torch.log((pred - target).abs() + 1) - torch.log(target + 1)
 
 
 class SeqGroupMetric(MaskedMetric):
@@ -69,15 +72,15 @@ class SeqGroupMetric(MaskedMetric):
                 pred,
                 target,
                 meta=None,
-                eps=1e-5,
+                eps=1e-6,
+                reduction=True,
                 *args, **kwargs):
         group = meta["group"]
         train_mask = (group == SeqGroupMetric.TRAIN)
         valid_mask = (group == SeqGroupMetric.VALID)
-        train_loss = super(SeqGroupMetric, self).forward(pred, target, train_mask)
-
+        train_loss = super(SeqGroupMetric, self).forward(pred, target, train_mask, reduction=reduction)
         with torch.no_grad():
-            valid_loss = super(SeqGroupMetric, self).forward(pred, target, valid_mask)
+            valid_loss = super(SeqGroupMetric, self).forward(pred, target, valid_mask, reduction=reduction)
 
         return {
             "train_loss": train_loss,
@@ -168,7 +171,7 @@ class MaskedAPE(MaskedMetric):
         super(MaskedAPE, self).__init__(self.ape, "MaskAPE")
 
     @staticmethod
-    def ape(pred, target, eps=1e-5):
+    def ape(pred, target, eps=1e-6):
         return 100 * abs((pred - target) / (target + eps))
 
 
@@ -177,7 +180,7 @@ class APE(SeqGroupMetric):
         super(APE, self).__init__(self.ape, "MaskAPE")
 
     @staticmethod
-    def ape(pred, target, eps=1e-5):
+    def ape(pred, target, eps=1e-6):
         return 100 * abs((pred - target) / (target + eps))
 
 
@@ -227,7 +230,8 @@ class TimeSeriesTransformer(pl.LightningModule):
         self.metric_object = APE()
         self.output_projection = nn.Linear(n_heads * value_dimensions, 1)
         # self.output_projection = nn.Conv1d(n_heads * value_dimensions, 1, 1)
-        self.filenames = glob.glob(self.file_re)
+        if type(file_re) != dict:
+            self.filenames = glob.glob(file_re)
         self.lr = lr
         self.seed = seed
         self.pre_normalize = nn.LayerNorm(normalized_shape=[self.seq_len, input_dimensions])
@@ -271,7 +275,7 @@ class TimeSeriesTransformer(pl.LightningModule):
         else:
             return 'cpu'
 
-    def forward(self, x, meta):
+    def forward(self, x, meta, **transformer_kwargs):
         # ar = torch.arange(self.seq_len).float().type_as(x)
         # relative_pos = self.positional_encoder(ar).unsqueeze(0).repeat(
         #     [x.shape[0], 1, 1])
@@ -281,10 +285,30 @@ class TimeSeriesTransformer(pl.LightningModule):
         x = self.model_projection(x) * math.sqrt(self.project_dimension)
 
         # x = x + relative_pos
-        regress_embeddings, _ = self.transformer(inputs_embeds=x, attention_mask=seq_mask)
+        regress_embeddings, _ = self.transformer(inputs_embeds=x, attention_mask=seq_mask, **transformer_kwargs)
         pred = self.output_projection(regress_embeddings)
 
         return pred
+
+    def pred_with_attention(self, x, meta=None):
+        with torch.no_grad():
+            seq_mask = (x[..., 0] > 0)
+            # x = self.pre_normalize(x)
+            x = self.model_projection(x) * math.sqrt(self.project_dimension)
+
+            # x = x + relative_pos
+            regress_embeddings, cache, attention = self.transformer(
+                inputs_embeds=x
+                , attention_mask=seq_mask
+                , output_attentions=True
+            )
+
+            pred = self.output_projection(regress_embeddings)
+
+        return {
+            "pred": pred,
+            "attention": attention,
+        }
 
     def reset(self):
         pass
@@ -393,6 +417,9 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
     )
 
     trainer.fit(model)
+
+    import seaborn as sns
+    sns.heatmap()
 
 
 if __name__ == "__main__":
