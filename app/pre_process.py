@@ -19,10 +19,16 @@ def get_stock_name(x):
     return x.split("/")[-1][:-4]
 
 
+def future(z, window, agg):
+    z = z.shift(-window)
+    return agg(z.rolling(window))
+
+
 def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
                       , train_date='2008-01-01'
                       , valid_date='2014-01-01'
                       , output_fn=None
+                      , window=20
                       ):
     # if not os.path.exists(TF_RECORDS):
     #     os.makedirs(TF_RECORDS)
@@ -51,7 +57,12 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
             x = df[feature].values
             if max_seq_len > x.shape[0] > min_seq_len:
                 inputs = np.concatenate([np.zeros([1, len(feature)]), x], axis=0).astype(np.float32)
-                targets = np.concatenate([x[:, 3], np.zeros(1), ], axis=0).astype(np.float32).tolist()
+                max_within_window = future(df.Close, window, agg=lambda x: x.max())
+                # min_within_window = future(df.Close, window, agg=lambda x: x.min())
+
+                max_within_window.fillna(0, inplace=True)
+                # min_within_window.fillna(0, inplace=True)
+                targets = np.concatenate([max_within_window, np.zeros(1), ], axis=0).astype(np.float32).tolist()
                 days_offset = np.concatenate([np.zeros(1), df.days_offset], axis=0).astype(np.float32)
 
                 # TODO padding front
