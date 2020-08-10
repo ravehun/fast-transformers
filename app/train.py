@@ -30,7 +30,7 @@ class MaskedMetric(Metric):
     def forward(self,
                 pred: torch.Tensor,
                 target: torch.Tensor,
-                eps= 1e-9
+                eps=1e-9
                 ) -> torch.Tensor:
         mask = (target > 0).long()
 
@@ -51,11 +51,18 @@ class MaskedRMSLE(MaskedMetric):
         return mse(torch.log(pred + 1), torch.log(target + 1))
 
 
+from pytorch_lightning.callbacks import EarlyStopping
+
+
+
+
+
 class MyIterableDataset(IterableDataset):
 
     def __init__(self, fn):
         self.fn = fn
         self.feature = None
+
     def load(self):
         npz = np.load(self.fn)
 
@@ -73,6 +80,7 @@ class MyIterableDataset(IterableDataset):
             y = self.label[idx]
             meta = self.stock_name[idx]
             yield x, y, meta
+
 
 class ToTensor():
     def __call__(self, xs):
@@ -203,6 +211,7 @@ class TimeSeriesTransformer(pl.LightningModule):
         loss = torch.stack([x["loss"] for x in outputs]).mean()
         print(f"train loss: {loss}")
         return {"train_loss": loss}
+
     #
     # def validation_step(self, batch, batch_nb):
     #     x, y, meta = batch
@@ -235,12 +244,12 @@ class TimeSeriesTransformer(pl.LightningModule):
         optimizer = RAdam(self.parameters())
         return optimizer
 
-
     def train_dataloader(self) -> DataLoader:
         dataset = MyIterableDataset(
             self.filenames[0]
         )
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+
 
 @click.command()
 @click.option('--file-re', type=str, default='../data/sample_record_npz/*.npz', show_default=True, help="file regex")
@@ -249,7 +258,7 @@ class TimeSeriesTransformer(pl.LightningModule):
 @click.option('--gpus', type=int, default=None, show_default=True, help="gpu num")
 @click.option('--accumulate_grad_batches', type=int, default=1, show_default=True, help="update with N batches")
 @click.option('--auto_lr_find', type=bool, default=False, show_default=True, help="auto_lr_find")
-def train(file_re,batch_size,attention_type,gpus,accumulate_grad_batches,auto_find_lr):
+def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, auto_find_lr):
     torch.cuda.empty_cache()
     model = TimeSeriesTransformer(input_dimensions=5,
                                   file_re=file_re,
@@ -265,7 +274,8 @@ def train(file_re,batch_size,attention_type,gpus,accumulate_grad_batches,auto_fi
                                   seq_len=1500,
                                   seed=101,
                                   lr=1e-7,
-                                )
+                                  )
+
 
     trainer = pl.Trainer(
         max_epochs=100,
@@ -276,11 +286,11 @@ def train(file_re,batch_size,attention_type,gpus,accumulate_grad_batches,auto_fi
         gpus=gpus,
         auto_lr_find=auto_find_lr,
         # use_amp=False,  # todo remove for gpu
-        accumulate_grad_batches=accumulate_grad_batches
+        accumulate_grad_batches=accumulate_grad_batches,
+
     )
 
     trainer.fit(model)
-
 
 if __name__ == "__main__":
     train()

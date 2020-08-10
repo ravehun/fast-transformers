@@ -2,6 +2,7 @@ import warnings
 
 import click
 import tqdm
+from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.metrics import RMSLE, Metric
 from pytorch_lightning.metrics.functional import mse
 from torch.optim import SGD
@@ -20,110 +21,25 @@ import torch
 import pytorch_lightning as pl
 import torch.nn as nn
 
-from common_utils import CommonUtils
+from common_utils import CommonUtils, Mapping
 
 from loss import *
 
 
-#
-# class MaskedMetric(Metric):
-#     def __init__(self, metric_func, name):
-#         self.func = metric_func
-#         super(MaskedMetric, self).__init__(name)
-#
-#     def forward(self,
-#                 pred: torch.Tensor,
-#                 target: torch.Tensor,
-#                 mask: torch.Tensor = None,
-#                 eps=1e-6,
-#                 reduction=True,
-#                 *args,
-#                 **kwargs
-#                 ) -> torch.Tensor:
-#         if len(pred.shape) != 2:
-#             raise ValueError("pred dim needs to be 2")
-#         if mask is None:
-#             mask = (target > 0)
-#         mask = mask.float()
-#         metric = None
-#         if mask.sum() == 0:
-#             metric = torch.zeros(pred.shape[0])
-#         else:
-#             metric = self.func(pred, target)
-#             metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
-#             if reduction:
-#                 metric = metric.mean()
-#
-#         return metric
-#
-#
-# class MaskedRMSLE(MaskedMetric):
-#     def __init__(self):
-#         super(MaskedRMSLE, self).__init__(self.rsmle, "MaskRmsle")
-#
-#     @staticmethod
-#     def rsmle(pred, target):
-#         return torch.log((pred - target).abs() + 1) - torch.log(target + 1)
-#
-#
-# class SeqGroupMetric(MaskedMetric):
-#     TRAIN = 1
-#     VALID = 2
-#     PAD = 0
-#
-#     def forward(self,
-#                 pred,
-#                 target,
-#                 meta=None,
-#                 eps=1e-6,
-#                 reduction=True,
-#                 *args, **kwargs):
-#         group = meta["group"]
-#         train_mask = (group == SeqGroupMetric.TRAIN)
-#         valid_mask = (group == SeqGroupMetric.VALID)
-#         train_loss = super(SeqGroupMetric, self).forward(pred, target, train_mask, reduction=reduction)
-#         with torch.no_grad():
-#             valid_loss = super(SeqGroupMetric, self).forward(pred, target, valid_mask, reduction=reduction)
-#
-#         return {
-#             "train_loss": train_loss,
-#             "valid_loss": valid_loss,
-#         }
-#
-#
-# class MaskedMLABE(SeqGroupMetric):
-#     def __init__(self):
-#         super(MaskedMLABE, self).__init__(self.mlabe, "MaskMeanLogAbsoluteBoostError")
-#
-#     @staticmethod
-#     def mlabe(pred, target, eps=1e-6):
-#         return torch.log(((pred - target) / (target + eps)).abs())
-#
-#
-# class MaskedAPE(MaskedMetric):
-#     def __init__(self):
-#         super(MaskedAPE, self).__init__(self.ape, "MaskAPE")
-#
-#     @staticmethod
-#     def ape(pred, target, eps=1e-6):
-#         return 100 * abs((pred - target) / (target + eps))
-#
-#
-# class APE(SeqGroupMetric):
-#     def __init__(self):
-#         super(APE, self).__init__(self.ape, "MaskAPE")
-#
-#     @staticmethod
-#     def ape(pred, target, eps=1e-6):
-#         return 100 * abs((pred - target) / (target + eps))
+class TrainEarlyStopping(EarlyStopping):
+    def on_train_end(self, trainer, pl_module):
+        super(TrainEarlyStopping, self).on_train_end(trainer, pl_module)
+        super(TrainEarlyStopping, self).on_validation_end(trainer, pl_module)
 
 
 class MyIterableDataset(IterableDataset):
 
-    def __init__(self, fn, valid_start_date="2013-01-01"):
+    def __init__(self, fn, valid_start_date="2013-01-01", mapping=None, front_padding_num=0):
         self.fn = fn
         self.feature = None
         self.valid_start_date = valid_start_date
+        self.mapping = mapping
+        self.front_padding_num = front_padding_num
 
     @staticmethod
     def affine(x, inf, sup):
@@ -163,15 +79,28 @@ class MyIterableDataset(IterableDataset):
 
             return np.array(out).reshape(origin_shape)
 
+        self.stock_name = npz["stock_name"]
         volume = npz["input"][..., 4:5]
         volume = self.norm(volume)
         feature = np.concatenate([npz["input"][..., :4], volume], axis=2)
-        self.feature = torch.tensor(feature, dtype=torch.float32)
-        self.label = torch.tensor(npz["target"], dtype=torch.float32)
+        label = npz["target"]
         days_offset = npz["days_offset"]
+
         valid_start_offset = CommonUtils.date_to_idx(self.valid_start_date)
+        if self.front_padding_num > 0:
+            feature = np.pad(feature
+                             , [(0, 0), (self.front_padding_num, 0), (0, 0)]
+                             , constant_values=0.0)
+            label = np.pad(label
+                           , [(0, 0), (self.front_padding_num, 0)]
+                           , constant_values=0.0)
+            days_offset = np.pad(days_offset
+                                 , [(0, 0), (self.front_padding_num, 0)]
+                                 , constant_values=0.0)
+
+        self.feature = torch.tensor(feature, dtype=torch.float32)
+        self.label = torch.tensor(label, dtype=torch.float32)
         self.group = torch.tensor(group_mask(days_offset, valid_start_offset), dtype=torch.float32)
-        self.stock_name = npz["stock_name"]
 
     def __iter__(self):
         if self.feature is None:
@@ -186,27 +115,6 @@ class MyIterableDataset(IterableDataset):
                 "group": self.group[idx],
             }
             yield x, y, meta
-
-
-class ToTensor():
-    def __call__(self, xs):
-        return tuple(torch.tensor(x, dtype=torch.float32) for x in xs)
-
-    def __repr__(self):
-        return self.__class__.__name__ + '()'
-
-
-class PositionalEncoding(nn.Module):
-    "Encode the position with a sinusoid."
-
-    def __init__(self, d: int):
-        super(PositionalEncoding, self).__init__()
-        self.register_buffer('freq', 1 / (10000 ** (torch.arange(0., d, 2.) / d)))
-
-    def forward(self, pos: torch.Tensor):
-        inp = torch.ger(pos, self.freq)
-        enc = torch.cat([inp.sin(), inp.cos()], dim=-1)
-        return enc
 
 
 class TimeSeriesTransformer(pl.LightningModule):
@@ -225,6 +133,8 @@ class TimeSeriesTransformer(pl.LightningModule):
                  lr=1e-7,
                  seq_len=1000,
                  seed=100,
+                 asset_list=None,
+                 front_padding_num=3,
                  **kwargs):
         super(TimeSeriesTransformer, self).__init__()
 
@@ -234,7 +144,6 @@ class TimeSeriesTransformer(pl.LightningModule):
         # self.stock_mapping_fn = stock_mapping_fn
         # self.model_projection = nn.Conv1d(input_dimensions, project_dimension, 1)
         self.model_projection = nn.Linear(input_dimensions, project_dimension)
-        self.positional_encoder = PositionalEncoding(project_dimension)
         self.seq_len = seq_len
         self.loss = MaskedMLABE()
         # self.loss = APE()
@@ -247,19 +156,15 @@ class TimeSeriesTransformer(pl.LightningModule):
             self.filenames = glob.glob(file_re)
         self.lr = lr
         self.seed = seed
-        self.pre_normalize = nn.LayerNorm(normalized_shape=[self.seq_len, input_dimensions])
         np.random.seed(seed)
-        # self.split_date = split_date
-        # self.end_date = end_date
-        # random.shuffle(self.filenames)
-        # self.training_files = self.filenames
-        # self.valid_files = glob.glob(valid_file_re)
-        # if not self.training_files:
-        #     # if not self.training_files or (not self.valid_files):
-        #     raise ValueError(f"input file train {self.training_files} is empty")
+        self.asset_list = asset_list
+        self.words_offset = 10
+        self.mapping = Mapping().load(self.asset_list, self.words_offset)
         self.num_workers = num_workers
-        # self.metric = MaskedABE()
-
+        self.stock_embedings_length = len(self.mapping) + self.words_offset
+        self.stock_embeddings = torch.nn.Embedding(self.stock_embedings_length, project_dimension)
+        self.front_padding_num = front_padding_num
+        self.seg_token = 1
         config = GPT2Config(
             batch_size=self.batch_size,
             vocab_size=2,
@@ -289,13 +194,17 @@ class TimeSeriesTransformer(pl.LightningModule):
             return 'cpu'
 
     def forward(self, x, meta, **transformer_kwargs):
-        # ar = torch.arange(self.seq_len).float().type_as(x)
-        # relative_pos = self.positional_encoder(ar).unsqueeze(0).repeat(
-        #     [x.shape[0], 1, 1])
-
         seq_mask = (x[..., 0] > 0)
-        # x = self.pre_normalize(x)
         x = self.model_projection(x) * math.sqrt(self.project_dimension)
+
+        if self.front_padding_num > 0:
+            stock_id = self.mapping.name2id(meta["stock_id"])
+
+            stock_id = np.pad(stock_id.reshape([-1, 1]), [(0, 0), (1, 1)], mode='constant',
+                              constant_values=self.seg_token)
+            stock_id = torch.tensor(stock_id)
+            stock_embedding = self.stock_embeddings(stock_id)
+            x[:, :self.front_padding_num, :] = stock_embedding
 
         # x = x + relative_pos
         regress_embeddings, _ = self.transformer(inputs_embeds=x, attention_mask=seq_mask, **transformer_kwargs)
@@ -371,6 +280,7 @@ class TimeSeriesTransformer(pl.LightningModule):
     def train_dataloader(self) -> DataLoader:
         dataset = MyIterableDataset(
             self.filenames[0]
+            , mapping=self.mapping
         )
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers)
 
@@ -398,6 +308,8 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   seq_len=1500,
                                   seed=101,
                                   lr=1e-4,
+                                  asset_list='../data/asset_list.txt',
+                                  front_padding_num=3
                                   )
 
     trainer = pl.Trainer(
@@ -411,6 +323,10 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         # use_amp=False,
         gradient_clip_val=2.5,
         accumulate_grad_batches=accumulate_grad_batches,
+        callbacks=[
+            TrainEarlyStopping(patience=5)
+        ],
+        weights_save_path='lightning_logs'
         # precision=16,
         # tpu_cores=8
     )

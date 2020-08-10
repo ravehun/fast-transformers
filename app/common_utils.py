@@ -1,4 +1,6 @@
 from datetime import timedelta, datetime
+import pandas as pd
+import numpy as np
 
 
 class CommonUtils():
@@ -14,3 +16,24 @@ class CommonUtils():
         date_format = "%Y-%m-%d"
         cur = datetime.strptime(start, date_format) + timedelta(days=days)
         return cur.isoformat()
+
+
+class Mapping():
+    def __init__(self, ):
+        pass
+    def __len__(self):
+        return self.n2i.shape[0]
+
+    def load(self, fn, offset=10):
+        data = pd.read_csv(fn, header=None, names=["stock_name"])
+        data["stock_id"] = data.index + offset
+
+        self.n2i = data.set_index("stock_name").stock_id
+        self.i2n = data.set_index("stock_id").stock_name
+        return self
+
+    def name2id(self, names):
+        return np.array(list(self.n2i[name] for name in names))
+
+    def id2name(self, ids):
+        return np.array(list(self.i2n[id] for id in ids))

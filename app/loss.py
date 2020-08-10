@@ -89,4 +89,4 @@ class APE(SeqGroupMetric):
 
     @staticmethod
     def ape(pred, target, eps=1e-6):
-        return 100 * abs((pred - target) / (target + eps))
+        return 100 * abs((pred - target) /   (target + eps))
