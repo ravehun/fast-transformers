@@ -10,7 +10,8 @@ class MaskedMetric(Metric):
     def forward(self,
                 pred: torch.Tensor,
                 target: torch.Tensor,
-                mask: torch.Tensor = None,
+                confidence: torch.Tensor,
+                mask: torch.Tensor,
                 eps=1e-6,
                 reduction=True,
                 *args,
@@ -18,11 +19,12 @@ class MaskedMetric(Metric):
                 ) -> torch.Tensor:
         if len(pred.shape) != 2:
             raise ValueError("pred dim needs to be 2")
-        if mask is None:
-            mask = (target > 0)
-        mask = mask.float()
+
+        mask = (1 - mask.float()) * -1e-8
+        mask = mask + confidence
+        mask = torch.nn.Softmax(dim=1)(mask)
         metric = self.func(pred, target)
-        metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
+        metric = (mask * metric).sum(dim=1)
         if reduction:
             metric = metric.mean()
 
@@ -45,17 +47,19 @@ class SeqGroupMetric(MaskedMetric):
 
     def forward(self,
                 pred,
+                confidence,
                 target,
+                group,
                 meta=None,
                 eps=1e-6,
                 reduction=True,
                 *args, **kwargs):
-        group = meta["group"]
+        # group = meta["group"]
         train_mask = (group == SeqGroupMetric.TRAIN)
         valid_mask = (group == SeqGroupMetric.VALID)
-        train_loss = super(SeqGroupMetric, self).forward(pred, target, train_mask, reduction=reduction)
+        train_loss = super(SeqGroupMetric, self).forward(pred, confidence, target, train_mask, reduction=reduction)
         with torch.no_grad():
-            valid_loss = super(SeqGroupMetric, self).forward(pred, target, valid_mask, reduction=reduction)
+            valid_loss = super(SeqGroupMetric, self).forward(pred, confidence, target, valid_mask, reduction=reduction)
 
         return {
             "train_loss": train_loss,
@@ -89,4 +93,4 @@ class APE(SeqGroupMetric):
 
     @staticmethod
     def ape(pred, target, eps=1e-6):
-        return 100 * abs((pred - target) /   (target + eps))
+        return 100 * abs((pred - target) / (target + eps))

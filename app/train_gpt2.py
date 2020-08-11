@@ -34,12 +34,13 @@ class TrainEarlyStopping(EarlyStopping):
 
 class MyIterableDataset(IterableDataset):
 
-    def __init__(self, fn, valid_start_date="2013-01-01", mapping=None, front_padding_num=0):
+    def __init__(self, fn, valid_start_date="2013-01-01", mapping=None, front_padding_num=0, seg_token=1):
         self.fn = fn
         self.feature = None
         self.valid_start_date = valid_start_date
         self.mapping = mapping
         self.front_padding_num = front_padding_num
+        self.seg_token = seg_token
 
     @staticmethod
     def affine(x, inf, sup):
@@ -85,6 +86,7 @@ class MyIterableDataset(IterableDataset):
         feature = np.concatenate([npz["input"][..., :4], volume], axis=2)
         label = npz["target"]
         days_offset = npz["days_offset"]
+        stock_id = self.mapping.name2id(self.stock_name)
 
         valid_start_offset = CommonUtils.date_to_idx(self.valid_start_date)
         if self.front_padding_num > 0:
@@ -102,6 +104,11 @@ class MyIterableDataset(IterableDataset):
         self.label = torch.tensor(label, dtype=torch.float32)
         self.group = torch.tensor(group_mask(days_offset, valid_start_offset), dtype=torch.float32)
 
+        self.stock_id = np.pad(stock_id.reshape([-1, 1]), [(0, 0), (1, 1)], mode='constant',
+                               constant_values=self.seg_token)
+
+        self.stock_id = torch.tensor(self.stock_id, dtype=torch.int64)
+
     def __iter__(self):
         if self.feature is None:
             self.load()
@@ -111,8 +118,9 @@ class MyIterableDataset(IterableDataset):
             x = self.feature[idx]
             y = self.label[idx]
             meta = {
-                "stock_id": self.stock_name[idx],
+                "stock_name": self.stock_name[idx],
                 "group": self.group[idx],
+                "stock_id": self.stock_id[idx]
             }
             yield x, y, meta
 
@@ -150,7 +158,7 @@ class TimeSeriesTransformer(pl.LightningModule):
         self.file_re = file_re
         self.batch_size = batch_size
         self.metric_object = MaskedAPE()
-        self.output_projection = nn.Linear(n_heads * value_dimensions, 1)
+        self.output_projection = nn.Linear(n_heads * value_dimensions, 2)
         # self.output_projection = nn.Conv1d(n_heads * value_dimensions, 1, 1)
         if type(file_re) != dict:
             self.filenames = glob.glob(file_re)
@@ -198,25 +206,27 @@ class TimeSeriesTransformer(pl.LightningModule):
         x = self.model_projection(x) * math.sqrt(self.project_dimension)
 
         if self.front_padding_num > 0:
-            stock_id = self.mapping.name2id(meta["stock_id"])
-
-            stock_id = np.pad(stock_id.reshape([-1, 1]), [(0, 0), (1, 1)], mode='constant',
-                              constant_values=self.seg_token)
-            stock_id = torch.tensor(stock_id)
+            stock_id = meta["stock_id"]
             stock_embedding = self.stock_embeddings(stock_id)
             x[:, :self.front_padding_num, :] = stock_embedding
 
         # x = x + relative_pos
         regress_embeddings, _ = self.transformer(inputs_embeds=x, attention_mask=seq_mask, **transformer_kwargs)
-        pred = self.output_projection(regress_embeddings)
-
-        return pred
+        pred, confidence = self.output_projection(regress_embeddings).split(1, -1)
+        return {
+            "pred": pred.squeeze(-1),
+            "confidence": confidence.squeeze(-1),
+        }
 
     def pred_with_attention(self, x, meta=None):
         with torch.no_grad():
             seq_mask = (x[..., 0] > 0)
-            # x = self.pre_normalize(x)
             x = self.model_projection(x) * math.sqrt(self.project_dimension)
+
+            if self.front_padding_num > 0:
+                stock_id = meta["stock_id"]
+                stock_embedding = self.stock_embeddings(stock_id)
+                x[:, :self.front_padding_num, :] = stock_embedding
 
             # x = x + relative_pos
             regress_embeddings, cache, attention = self.transformer(
@@ -226,7 +236,6 @@ class TimeSeriesTransformer(pl.LightningModule):
             )
 
             pred = self.output_projection(regress_embeddings)
-
         return {
             "pred": pred,
             "attention": attention,
@@ -237,26 +246,21 @@ class TimeSeriesTransformer(pl.LightningModule):
 
     def training_step(self, batch, bn):
         x, y, meta = batch
-        pred = self(x, meta)
-        pred = pred.squeeze(-1)
-        output = self.loss.forward(pred, y, meta)
+        model_output = self(x, meta)
+        loss_output = self.loss.forward(model_output["pred"], model_output["confidence"], y, group=meta["group"])
 
         log = {
-            "train_loss": output["train_loss"]
-            , "valid_loss": output["valid_loss"]
+            "train_loss": loss_output["train_loss"]
+            , "valid_loss": loss_output["valid_loss"]
         }
 
         ret = {
-            'loss': output["train_loss"],
-            "valid_loss": output["valid_loss"],
+            'loss': loss_output["train_loss"],
+            "valid_loss": loss_output["valid_loss"],
             "log": log,
         }
 
-        if self.metric_object is not None:
-            with torch.no_grad():
-                metricAPE = self.metric_object.forward(pred, y, output['valid_mask'])
-                log["APE"] = metricAPE
-                ret["APE"] = metricAPE
+
 
         return ret
 
@@ -266,8 +270,7 @@ class TimeSeriesTransformer(pl.LightningModule):
     ):
         train_loss = torch.stack([x["loss"] for x in outputs]).mean()
         valid_loss = torch.stack([x["valid_loss"] for x in outputs]).mean()
-        APE = torch.stack([x["APE"] for x in outputs]).mean()
-        print(f"train loss: {train_loss}, valid_loss: {valid_loss}, APE:{APE}")
+        print(f"train loss: {train_loss}, valid_loss: {valid_loss}")
         return {"train_loss": train_loss, "val_loss": valid_loss}
 
     def configure_optimizers(self):
@@ -326,9 +329,11 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         callbacks=[
             TrainEarlyStopping(patience=5)
         ],
-        weights_save_path='lightning_logs'
+        # weights_save_path='lightning_logs1',
+        show_progress_bar=False,
         # precision=16,
         # tpu_cores=8
+
     )
 
     trainer.fit(model)
