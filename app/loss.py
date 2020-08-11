@@ -20,7 +20,8 @@ class MaskedMetric(Metric):
         if len(pred.shape) != 2:
             raise ValueError("pred dim needs to be 2")
 
-        mask = (1 - mask.float()) * -1e-8
+
+        mask = (1 - mask.float()) * -1e8
         mask = mask + confidence
         mask = torch.nn.Softmax(dim=1)(mask)
         metric = self.func(pred, target)

@@ -270,7 +270,7 @@ class TimeSeriesTransformer(pl.LightningModule):
     ):
         train_loss = torch.stack([x["loss"] for x in outputs]).mean()
         valid_loss = torch.stack([x["valid_loss"] for x in outputs]).mean()
-        print(f"train loss: {train_loss}, valid_loss: {valid_loss}")
+        print(f"train loss: {train_loss:.6f}, valid_loss: {valid_loss:.6f}")
         return {"train_loss": train_loss, "val_loss": valid_loss}
 
     def configure_optimizers(self):
