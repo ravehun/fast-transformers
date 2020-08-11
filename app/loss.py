@@ -6,6 +6,14 @@ class MaskedMetric(Metric):
     def __init__(self, metric_func, name):
         self.func = metric_func
         super(MaskedMetric, self).__init__(name)
+    @staticmethod
+    def tril_softmax(mask):
+
+        l = mask.shape[1]
+        tril = torch.tril(torch.ones(l, l))
+        mask = mask.exp()
+        tril_normed = torch.einsum('sl,nl->ns', tril, mask)
+        return mask / tril_normed
 
     def forward(self,
                 pred: torch.Tensor,
@@ -20,10 +28,12 @@ class MaskedMetric(Metric):
         if len(pred.shape) != 2:
             raise ValueError("pred dim needs to be 2")
 
-
         mask = (1 - mask.float()) * -1e8
         mask = mask + confidence
-        mask = torch.nn.Softmax(dim=1)(mask)
+
+        mask = self.tril_softmax(mask)
+        # mask = torch.nn.Softmax(dim=1)(mask)
+
         metric = self.func(pred, target)
         metric = (mask * metric).sum(dim=1)
         if reduction:

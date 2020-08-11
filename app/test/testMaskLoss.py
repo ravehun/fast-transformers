@@ -11,7 +11,17 @@ class MaskLoss(unittest.TestCase):
             print(f"expect {x}, actual {y}")
         self.assertTrue(res)
 
-
+    def test_tril_softmax(self):
+        from loss import MaskedMetric
+        mock = torch.Tensor(
+            [1, 1, 1]
+        ).reshape(1,-1)
+        expected = torch.Tensor([1, 1. / 2, 1. / 3])
+        # print(MaskedMetric.tril_softmax(mock),)
+        self._almost_equals(
+            MaskedMetric.tril_softmax(mock).reshape(-1),
+            expected,
+        )
     def test_MaskedAPE(self):
         eps = 1e-4
         from loss import MaskedAPE
@@ -23,48 +33,49 @@ class MaskLoss(unittest.TestCase):
                  ]
         expected = torch.tensor([0])
         assert expected == metric(*mock1)
+    #
+    #     mock1 = [torch.tensor([1, 1, 0]).reshape(1, 3),
+    #              torch.tensor([1, 1, 1]).reshape(1, 3),
+    #              torch.tensor([1, 1, -100]).reshape(1, 3),
+    #              torch.tensor([1, 1, 1]).reshape(1, 3),
+    #              ]
+    #     expected = torch.tensor([0])
+    #     self._almost_equals(expected, metric(*mock1))
+    #
+    #     mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
+    #              torch.tensor([1, 1, 0]).reshape(1, 3),
+    #              torch.tensor([1, 1, -100]).reshape(1, 3),
+    #              torch.tensor([1, 1, 1]).reshape(1, 3),
+    #              ]
+    #     expected = torch.tensor([50])
+    #     self._almost_equals(expected, metric(*mock1))
+    #
+    #     mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
+    #              torch.tensor([1, 1, 0]).reshape(1, 3),
+    #              torch.tensor([1, 1, 1]).reshape(1, 3),
+    #              torch.tensor([1, 1, 0]).reshape(1, 3),
+    #              ]
+    #     expected = torch.tensor([50])
+    #     self._almost_equals(expected, metric(*mock1))
+    #
+    #
+    #
+    #
+    # mock1 = [torch.tensor([0, 2, 1, 3]).reshape(1, -1), torch.tensor([1, 1, 0, 0]).reshape(1, -1)]
+    # expected = torch.tensor([100])
+    # self._almost_equals(expected, metric(*mock1))
 
-        mock1 = [torch.tensor([1, 1, 0]).reshape(1, 3),
-                 torch.tensor([1, 1, 1]).reshape(1, 3),
-                 torch.tensor([1, 1, -100]).reshape(1, 3),
-                 torch.tensor([1, 1, 1]).reshape(1, 3),
-                 ]
-        expected = torch.tensor([0])
-        self._almost_equals(expected, metric(*mock1))
-
-        mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
-                 torch.tensor([1, 1, 0]).reshape(1, 3),
-                 torch.tensor([1, 1, -100]).reshape(1, 3),
-                 torch.tensor([1, 1, 1]).reshape(1, 3),
-                 ]
-        expected = torch.tensor([50])
-        self._almost_equals(expected, metric(*mock1))
-
-        mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
-                 torch.tensor([1, 1, 0]).reshape(1, 3),
-                 torch.tensor([1, 1, 1]).reshape(1, 3),
-                 torch.tensor([1, 1, 0]).reshape(1, 3),
-                 ]
-        expected = torch.tensor([50])
-        self._almost_equals(expected, metric(*mock1))
-
-        #
-        # mock1 = [torch.tensor([0, 2, 1, 3]).reshape(1, -1), torch.tensor([1, 1, 0, 0]).reshape(1, -1)]
-        # expected = torch.tensor([100])
-        # self._almost_equals(expected, metric(*mock1))
-
-        # mock1 = [torch.tensor(
-        #     [
-        #         [0, 2, 1, 3],
-        #         [0, 2, 1, 3],
-        #     ]
-        # ).reshape(1, -1), torch.tensor([
-        #     [1, 1, 0, 0],
-        #     [1, 1, 0, 0],
-        # ]).reshape(1, -1)]
-        # expected = torch.tensor([100, 100])
-        # self._almost_equals(expected, metric(reduction=False, *mock1))
-
+    # mock1 = [torch.tensor(
+    #     [
+    #         [0, 2, 1, 3],
+    #         [0, 2, 1, 3],
+    #     ]
+    # ).reshape(1, -1), torch.tensor([
+    #     [1, 1, 0, 0],
+    #     [1, 1, 0, 0],
+    # ]).reshape(1, -1)]
+    # expected = torch.tensor([100, 100])
+    # self._almost_equals(expected, metric(reduction=False, *mock1))
 
     # def test_MaskedAPE(self):
     #     eps = 1e-4
