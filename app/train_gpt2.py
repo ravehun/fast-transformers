@@ -152,7 +152,7 @@ class TimeSeriesTransformer(pl.LightningModule):
         # self.stock_mapping_fn = stock_mapping_fn
         # self.model_projection = nn.Conv1d(input_dimensions, project_dimension, 1)
         self.model_projection = nn.Linear(input_dimensions, project_dimension)
-        self.seq_len = seq_len
+        self.seq_len = seq_len + front_padding_num
         self.loss = MaskedMLABE()
         # self.loss = APE()
         self.file_re = file_re
@@ -204,7 +204,6 @@ class TimeSeriesTransformer(pl.LightningModule):
     def forward(self, x, meta, **transformer_kwargs):
         seq_mask = (x[..., 0] > 0)
         x = self.model_projection(x) * math.sqrt(self.project_dimension)
-
         if self.front_padding_num > 0:
             stock_id = meta["stock_id"]
             stock_embedding = self.stock_embeddings(stock_id)
@@ -235,9 +234,10 @@ class TimeSeriesTransformer(pl.LightningModule):
                 , output_attentions=True
             )
 
-            pred = self.output_projection(regress_embeddings)
+            pred, confidence = self.output_projection(regress_embeddings).split(1, -1)
         return {
             "pred": pred,
+            "confidence": confidence,
             "attention": attention,
         }
 
@@ -259,8 +259,6 @@ class TimeSeriesTransformer(pl.LightningModule):
             "valid_loss": loss_output["valid_loss"],
             "log": log,
         }
-
-
 
         return ret
 
@@ -284,6 +282,7 @@ class TimeSeriesTransformer(pl.LightningModule):
         dataset = MyIterableDataset(
             self.filenames[0]
             , mapping=self.mapping
+            , front_padding_num=self.front_padding_num
         )
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers)
 
@@ -293,7 +292,7 @@ class TimeSeriesTransformer(pl.LightningModule):
 @click.option('--batch-size', type=int, default=1, show_default=True, help="batch size")
 @click.option('--attention-type', type=str, default='full', show_default=True, help="file regex")
 @click.option('--gpus', type=int, default=None, show_default=True, help="gpu num")
-@click.option('--accumulate_grad_batches', type=int, default=1, show_default=True, help="update with N batches")
+@click.option('--accumulate_grad_batches', type=int, default=11, show_default=True, help="update with N batches")
 @click.option('--auto_lr_find', type=bool, default=False, show_default=True, help="auto_lr_find")
 def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, auto_lr_find):
     torch.cuda.empty_cache()
@@ -331,6 +330,7 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         ],
         # weights_save_path='lightning_logs1',
         show_progress_bar=False,
+        resume_from_checkpoint='lightning_logs/version_8/checkpoints/epoch=2.ckpt'
         # precision=16,
         # tpu_cores=8
 

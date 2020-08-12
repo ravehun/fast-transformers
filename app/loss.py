@@ -9,17 +9,23 @@ class MaskedMetric(Metric):
 
     def forward(self,
                 pred: torch.Tensor,
-                target: torch.Tensor,
                 confidence: torch.Tensor,
+                target: torch.Tensor,
                 mask: torch.Tensor,
                 eps=1e-6,
                 reduction=True,
+                mask_group=False,
                 *args,
                 **kwargs
                 ) -> torch.Tensor:
-        if len(pred.shape) != 2:
-            raise ValueError("pred dim needs to be 2")
+        def _shape_check(x, dim):
+            if len(x.shape) != dim:
+                raise ValueError(f"expect {dim}, actual {len(x.shape)})")
 
+        _shape_check(pred, 2)
+        _shape_check(target, 2)
+        _shape_check(confidence, 2)
+        _shape_check(mask, 2)
 
         mask = (1 - mask.float()) * -1e8
         mask = mask + confidence
@@ -58,9 +64,11 @@ class SeqGroupMetric(MaskedMetric):
         # group = meta["group"]
         train_mask = (group == SeqGroupMetric.TRAIN)
         valid_mask = (group == SeqGroupMetric.VALID)
-        train_loss = super(SeqGroupMetric, self).forward(pred, confidence, target, train_mask, reduction=reduction)
+        train_loss = super(SeqGroupMetric, self).forward(pred=pred, confidence=confidence, target=target,
+                                                         mask=train_mask, reduction=reduction)
         with torch.no_grad():
-            valid_loss = super(SeqGroupMetric, self).forward(pred, confidence, target, valid_mask, reduction=reduction)
+            valid_loss = super(SeqGroupMetric, self).forward(pred=pred, confidence=confidence, target=target,
+                                                             mask=valid_mask, reduction=reduction)
 
         return {
             "train_loss": train_loss,
