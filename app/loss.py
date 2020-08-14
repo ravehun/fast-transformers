@@ -2,19 +2,18 @@ import torch
 from pytorch_lightning.metrics import Metric
 
 
+
 class MaskedMetric(Metric):
     def __init__(self, metric_func, name):
         self.func = metric_func
         super(MaskedMetric, self).__init__(name)
 
     def forward(self,
-                pred: torch.Tensor,
-                confidence: torch.Tensor,
+                outputs: dict,
                 target: torch.Tensor,
                 mask: torch.Tensor,
                 eps=1e-6,
                 reduction=True,
-                mask_group=False,
                 *args,
                 **kwargs
                 ) -> torch.Tensor:
@@ -22,21 +21,35 @@ class MaskedMetric(Metric):
             if len(x.shape) != dim:
                 raise ValueError(f"expect {dim}, actual {len(x.shape)})")
 
-        _shape_check(pred, 2)
+        # _shape_check(outputs, 2)
         _shape_check(target, 2)
-        _shape_check(confidence, 2)
         _shape_check(mask, 2)
 
-        mask = (1 - mask.float()) * -1e8
-        mask = mask + confidence
-        mask = torch.nn.Softmax(dim=1)(mask)
-        metric = self.func(pred, target)
-        metric = (mask * metric).sum(dim=1)
+        mask = mask.float()
+        metric = self.func(target=target, **outputs)
+        metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
         if reduction:
             metric = metric.mean()
 
         return metric
 
+
+class MaskedReweightedDiff(MaskedMetric):
+    def forward(self,
+                outputs: dict,
+                target: torch.Tensor,
+                mask: torch.Tensor,
+                eps=1e-6,
+                reduction=True,
+                reweight_by=None,
+                *args,
+                **kwargs
+                ) -> torch.Tensor:
+
+        original = super().forward(outputs=outputs, target=target, mask=mask, eps=eps, reduction=reduction)
+        mask = mask.float() * reweight_by
+        reweighted = super().forward(outputs=outputs, target=target, mask=mask, eps=eps, reduction=reduction)
+        return reweighted - original
 
 class MaskedRMSLE(MaskedMetric):
     def __init__(self):
@@ -53,8 +66,7 @@ class SeqGroupMetric(MaskedMetric):
     PAD = 0
 
     def forward(self,
-                pred,
-                confidence,
+                outputs,
                 target,
                 group,
                 meta=None,
@@ -64,10 +76,10 @@ class SeqGroupMetric(MaskedMetric):
         # group = meta["group"]
         train_mask = (group == SeqGroupMetric.TRAIN)
         valid_mask = (group == SeqGroupMetric.VALID)
-        train_loss = super(SeqGroupMetric, self).forward(pred=pred, confidence=confidence, target=target,
+        train_loss = super(SeqGroupMetric, self).forward(outputs=outputs, target=target,
                                                          mask=train_mask, reduction=reduction)
         with torch.no_grad():
-            valid_loss = super(SeqGroupMetric, self).forward(pred=pred, confidence=confidence, target=target,
+            valid_loss = super(SeqGroupMetric, self).forward(outputs=outputs, target=target,
                                                              mask=valid_mask, reduction=reduction)
 
         return {
@@ -103,3 +115,12 @@ class APE(SeqGroupMetric):
     @staticmethod
     def ape(pred, target, eps=1e-6):
         return 100 * abs((pred - target) / (target + eps))
+
+
+class NegtiveLogNormLoss(SeqGroupMetric):
+    def __init__(self):
+        super(NegtiveLogNormLoss, self).__init__(self.metric, "LogNormLoss")
+
+    @staticmethod
+    def metric(mu, ln_sigma, target, eps=1e-6):
+        return ln_sigma + (((target + eps).log() - mu) / ln_sigma.exp()) ** 2 / 2

@@ -153,7 +153,8 @@ class TimeSeriesTransformer(pl.LightningModule):
         # self.model_projection = nn.Conv1d(input_dimensions, project_dimension, 1)
         self.model_projection = nn.Linear(input_dimensions, project_dimension)
         self.seq_len = seq_len + front_padding_num
-        self.loss = MaskedMLABE()
+        # self.loss = MaskedMLABE()
+        self.loss = NegtiveLogNormLoss()
         # self.loss = APE()
         self.file_re = file_re
         self.batch_size = batch_size
@@ -211,10 +212,10 @@ class TimeSeriesTransformer(pl.LightningModule):
 
         # x = x + relative_pos
         regress_embeddings, _ = self.transformer(inputs_embeds=x, attention_mask=seq_mask, **transformer_kwargs)
-        pred, confidence = self.output_projection(regress_embeddings).split(1, -1)
+        mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
         return {
-            "pred": pred.squeeze(-1),
-            "confidence": confidence.squeeze(-1),
+            "mu": mu.squeeze(-1),
+            "ln_sigma": sigma.squeeze(-1),
         }
 
     def pred_with_attention(self, x, meta=None):
@@ -245,9 +246,9 @@ class TimeSeriesTransformer(pl.LightningModule):
         pass
 
     def training_step(self, batch, bn):
-        x, y, meta = batch
+        x, target, meta = batch
         model_output = self(x, meta)
-        loss_output = self.loss.forward(model_output["pred"], model_output["confidence"], y, group=meta["group"])
+        loss_output = self.loss.forward(model_output, target, group=meta["group"])
 
         log = {
             "train_loss": loss_output["train_loss"]
@@ -330,7 +331,7 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         ],
         # weights_save_path='lightning_logs1',
         show_progress_bar=False,
-        resume_from_checkpoint='lightning_logs/version_8/checkpoints/epoch=2.ckpt'
+        # resume_from_checkpoint='lightning_logs/version_8/checkpoints/epoch=2.ckpt'
         # precision=16,
         # tpu_cores=8
 
