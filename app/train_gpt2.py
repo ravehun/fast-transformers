@@ -158,7 +158,7 @@ class TimeSeriesTransformer(pl.LightningModule):
         # self.loss = APE()
         self.file_re = file_re
         self.batch_size = batch_size
-        self.metric_object = MaskedAPE()
+        self.metric_object = MaskedReweightedDiffMLABE()
         self.output_projection = nn.Linear(n_heads * value_dimensions, 2)
         # self.output_projection = nn.Conv1d(n_heads * value_dimensions, 1, 1)
         if type(file_re) != dict:
@@ -248,16 +248,28 @@ class TimeSeriesTransformer(pl.LightningModule):
     def training_step(self, batch, bn):
         x, target, meta = batch
         model_output = self(x, meta)
-        loss_output = self.loss.forward(model_output, target, group=meta["group"])
-
+        loss_output = self.loss(model_output, target, group=meta["group"])
+        with torch.no_grad():
+            metric_output = self.metric_object(
+                outputs={
+                    "pred": model_output["mu"]
+                },
+                target=target,
+                mask=loss_output["valid_mask"],
+                reweight_by=(1 / (model_output["ln_sigma"] + (1 - loss_output["valid_mask"].float()) * 1e6)).softmax(
+                    dim=1),
+            )
         log = {
             "train_loss": loss_output["train_loss"]
             , "valid_loss": loss_output["valid_loss"]
+
         }
 
         ret = {
             'loss': loss_output["train_loss"],
             "valid_loss": loss_output["valid_loss"],
+            "diff": metric_output["diff"],
+            "original": metric_output["original"],
             "log": log,
         }
 
@@ -267,9 +279,15 @@ class TimeSeriesTransformer(pl.LightningModule):
             self,
             outputs
     ):
-        train_loss = torch.stack([x["loss"] for x in outputs]).mean()
-        valid_loss = torch.stack([x["valid_loss"] for x in outputs]).mean()
-        print(f"train loss: {train_loss:.6f}, valid_loss: {valid_loss:.6f}")
+        def _agg_by_key(key):
+            return torch.stack([x[key] for x in outputs]).mean()
+
+        # train_loss = torch.stack([x["loss"] for x in outputs]).mean()
+        # valid_loss = torch.stack([x["valid_loss"] for x in outputs]).mean()
+        # mlabe = torch.stack([x["r-d-mlabe"] for x in outputs]).mean()
+        keys = ["loss", "valid_loss", "diff", 'original']
+        train_loss, valid_loss, diff, original = [_agg_by_key(key) for key in keys]
+        print(f"train loss: {train_loss:.6f}, valid_loss: {valid_loss:.6f}, diff: {diff:.6f} original: {original:.6f}")
         return {"train_loss": train_loss, "val_loss": valid_loss}
 
     def configure_optimizers(self):

@@ -2,6 +2,20 @@ import torch
 from pytorch_lightning.metrics import Metric
 
 
+class Loss_functions():
+
+    @staticmethod
+    def ape(pred, target, eps=1e-6):
+        return 100 * abs((pred - target) / (target + eps))
+
+    @staticmethod
+    def nll_lognorm(mu, ln_sigma, target, eps=1e-6):
+        return ln_sigma + (((target + eps).log() - mu) / ln_sigma.exp()) ** 2 / 2
+
+    @staticmethod
+    def mlabe(pred, target, eps=1e-6):
+        return torch.log(((pred - target) / (target + eps)).abs() + 1)
+
 
 class MaskedMetric(Metric):
     def __init__(self, metric_func, name):
@@ -44,20 +58,14 @@ class MaskedReweightedDiff(MaskedMetric):
                 reweight_by=None,
                 *args,
                 **kwargs
-                ) -> torch.Tensor:
-
+                ):
         original = super().forward(outputs=outputs, target=target, mask=mask, eps=eps, reduction=reduction)
         mask = mask.float() * reweight_by
         reweighted = super().forward(outputs=outputs, target=target, mask=mask, eps=eps, reduction=reduction)
-        return reweighted - original
-
-class MaskedRMSLE(MaskedMetric):
-    def __init__(self):
-        super(MaskedRMSLE, self).__init__(self.rsmle, "MaskRmsle")
-
-    @staticmethod
-    def rsmle(pred, target):
-        return torch.log((pred - target).abs() + 1) - torch.log(target + 1)
+        return {
+            "diff": reweighted - original,
+            "original": original
+        }
 
 
 class SeqGroupMetric(MaskedMetric):
@@ -92,35 +100,24 @@ class SeqGroupMetric(MaskedMetric):
 
 class MaskedMLABE(SeqGroupMetric):
     def __init__(self):
-        super(MaskedMLABE, self).__init__(self.mlabe, "MaskMeanLogAbsoluteBoostError")
+        super(MaskedMLABE, self).__init__(Loss_functions.mlabe, "MaskMeanLogAbsoluteBoostError")
 
-    @staticmethod
-    def mlabe(pred, target, eps=1e-6):
-        return torch.log(((pred - target) / (target + eps)).abs() + 1)
+
+class MaskedReweightedDiffMLABE(MaskedReweightedDiff):
+    def __init__(self):
+        super(MaskedReweightedDiffMLABE, self).__init__(Loss_functions.mlabe, "MaskedReweightedDiffMLABE")
 
 
 class MaskedAPE(MaskedMetric):
     def __init__(self):
-        super(MaskedAPE, self).__init__(self.ape, "MaskAPE")
-
-    @staticmethod
-    def ape(pred, target, eps=1e-6):
-        return 100 * abs((pred - target) / (target + eps))
+        super(MaskedAPE, self).__init__(Loss_functions.ape, "MaskAPE")
 
 
 class APE(SeqGroupMetric):
     def __init__(self):
-        super(APE, self).__init__(self.ape, "MaskAPE")
-
-    @staticmethod
-    def ape(pred, target, eps=1e-6):
-        return 100 * abs((pred - target) / (target + eps))
+        super(APE, self).__init__(Loss_functions.ape, "MaskAPE")
 
 
 class NegtiveLogNormLoss(SeqGroupMetric):
     def __init__(self):
-        super(NegtiveLogNormLoss, self).__init__(self.metric, "LogNormLoss")
-
-    @staticmethod
-    def metric(mu, ln_sigma, target, eps=1e-6):
-        return ln_sigma + (((target + eps).log() - mu) / ln_sigma.exp()) ** 2 / 2
+        super(NegtiveLogNormLoss, self).__init__(Loss_functions.nll_lognorm, "LogNormLoss")
