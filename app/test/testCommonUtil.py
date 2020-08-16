@@ -4,7 +4,7 @@ from common_utils import Mapping
 import numpy as np
 import torch
 
-class CommonUtils(unittest.TestCase):
+class TestCommonUtils(unittest.TestCase):
     def testMapping(self):
         m = Mapping()
         m.load('test/asset_list.txt')
@@ -17,5 +17,6 @@ class CommonUtils(unittest.TestCase):
         input = torch.ones(1,4).long()
         x= embedding(input)
         assert(x.shape == torch.Size([1,4,3]))
+
 if __name__ == '__main__':
     unittest.main()

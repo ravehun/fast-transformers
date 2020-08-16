@@ -34,13 +34,16 @@ class TrainEarlyStopping(EarlyStopping):
 
 class MyIterableDataset(IterableDataset):
 
-    def __init__(self, fn, valid_start_date="2013-01-01", mapping=None, front_padding_num=0, seg_token=1):
+    def __init__(self, fn, train_start_date, valid_start_date, position_oov_size, mapping=None, front_padding_num=0,
+                 seg_token=1):
         self.fn = fn
         self.feature = None
         self.valid_start_date = valid_start_date
         self.mapping = mapping
         self.front_padding_num = front_padding_num
         self.seg_token = seg_token
+        self.train_start_date = train_start_date
+        self.position_oov_size = position_oov_size
 
     @staticmethod
     def affine(x, inf, sup):
@@ -81,14 +84,17 @@ class MyIterableDataset(IterableDataset):
             return np.array(out).reshape(origin_shape)
 
         self.stock_name = npz["stock_name"]
+
+        ab_start_days_offset = CommonUtils.date_to_idx(self.train_start_date)
+        relative_valid_start_offset = CommonUtils.date_to_idx(self.valid_start_date) - ab_start_days_offset
         volume = npz["input"][..., 4:5]
         volume = self.norm(volume)
         feature = np.concatenate([npz["input"][..., :4], volume], axis=2)
         label = npz["target"]
-        days_offset = npz["days_offset"]
+        relative_days_offset = (npz["days_offset"] - ab_start_days_offset + self.position_oov_size) * \
+                               (npz["days_offset"] > 0).astype(npz["days_offset"].dtype)
         stock_id = self.mapping.name2id(self.stock_name)
 
-        valid_start_offset = CommonUtils.date_to_idx(self.valid_start_date)
         if self.front_padding_num > 0:
             feature = np.pad(feature
                              , [(0, 0), (self.front_padding_num, 0), (0, 0)]
@@ -96,18 +102,19 @@ class MyIterableDataset(IterableDataset):
             label = np.pad(label
                            , [(0, 0), (self.front_padding_num, 0)]
                            , constant_values=0.0)
-            days_offset = np.pad(days_offset
-                                 , [(0, 0), (self.front_padding_num, 0)]
-                                 , constant_values=0.0)
+            relative_days_offset = np.pad(relative_days_offset
+                                          , [(0, 0), (self.front_padding_num, 0)]
+                                          , constant_values=0.0)
 
         self.feature = torch.tensor(feature, dtype=torch.float32)
         self.label = torch.tensor(label, dtype=torch.float32)
-        self.group = torch.tensor(group_mask(days_offset, valid_start_offset), dtype=torch.float32)
+        self.group = torch.tensor(group_mask(relative_days_offset, relative_valid_start_offset), dtype=torch.float32)
 
         self.stock_id = np.pad(stock_id.reshape([-1, 1]), [(0, 0), (1, 1)], mode='constant',
                                constant_values=self.seg_token)
 
         self.stock_id = torch.tensor(self.stock_id, dtype=torch.int64)
+        self.days_offset = torch.tensor(relative_days_offset, dtype=torch.int64)
 
     def __iter__(self):
         if self.feature is None:
@@ -120,7 +127,8 @@ class MyIterableDataset(IterableDataset):
             meta = {
                 "stock_name": self.stock_name[idx],
                 "group": self.group[idx],
-                "stock_id": self.stock_id[idx]
+                "stock_id": self.stock_id[idx],
+                "days_off": self.days_offset[idx],
             }
             yield x, y, meta
 
@@ -143,9 +151,12 @@ class TimeSeriesTransformer(pl.LightningModule):
                  seed=100,
                  asset_list=None,
                  front_padding_num=3,
+                 train_start_date=None,
+                 valid_start_date=None,
                  **kwargs):
         super(TimeSeriesTransformer, self).__init__()
 
+        self.valid_start_date = valid_start_date
         project_dimension = query_dimensions * n_heads
         self.project_dimension = project_dimension
         # self.stock_num = stock_num
@@ -167,13 +178,16 @@ class TimeSeriesTransformer(pl.LightningModule):
         self.seed = seed
         np.random.seed(seed)
         self.asset_list = asset_list
-        self.words_offset = 10
-        self.mapping = Mapping().load(self.asset_list, self.words_offset)
+        self.stock_oov_size = 10
+        self.position_oov_size = 10
+        self.mapping = Mapping().load(self.asset_list, self.stock_oov_size)
         self.num_workers = num_workers
-        self.stock_embedings_length = len(self.mapping) + self.words_offset
+        self.stock_embedings_length = len(self.mapping) + self.stock_oov_size
         self.stock_embeddings = torch.nn.Embedding(self.stock_embedings_length, project_dimension)
         self.front_padding_num = front_padding_num
         self.seg_token = 1
+        self.train_start_date = train_start_date
+        self.n_positions = int(self.seq_len * 366 / 250) + self.position_oov_size
         config = GPT2Config(
             batch_size=self.batch_size,
             vocab_size=2,
@@ -184,7 +198,7 @@ class TimeSeriesTransformer(pl.LightningModule):
             # hidden_act=hidden_act,
             # hidden_dropout_prob=hidden_dropout_prob,
             # attention_probs_dropout_prob=attention_probs_dropout_prob,
-            n_positions=self.seq_len,
+            n_positions=self.n_positions,
             n_ctx=self.seq_len,
             # type_vocab_size=type_vocab_size,
             # initializer_range=initializer_range,
@@ -210,8 +224,13 @@ class TimeSeriesTransformer(pl.LightningModule):
             stock_embedding = self.stock_embeddings(stock_id)
             x[:, :self.front_padding_num, :] = stock_embedding
 
+
+        relative_days_off = meta["days_off"]
         # x = x + relative_pos
-        regress_embeddings, _ = self.transformer(inputs_embeds=x, attention_mask=seq_mask, **transformer_kwargs)
+        regress_embeddings, _ = self.transformer(inputs_embeds=x,
+                                                 attention_mask=seq_mask,
+                                                 position_ids=relative_days_off,
+                                                 **transformer_kwargs)
         mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
         return {
             "mu": mu.squeeze(-1),
@@ -228,18 +247,20 @@ class TimeSeriesTransformer(pl.LightningModule):
                 stock_embedding = self.stock_embeddings(stock_id)
                 x[:, :self.front_padding_num, :] = stock_embedding
 
-            # x = x + relative_pos
-            regress_embeddings, cache, attention = self.transformer(
-                inputs_embeds=x
-                , attention_mask=seq_mask
-                , output_attentions=True
-            )
+            relative_days_off = meta["days_off"]
 
-            pred, confidence = self.output_projection(regress_embeddings).split(1, -1)
+            # x = x + relative_pos
+            regress_embeddings, _ = self.transformer(inputs_embeds=x,
+                                                     attention_mask=seq_mask,
+                                                     position_ids=relative_days_off,
+                                                     **transformer_kwargs)
+
+            mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
         return {
-            "pred": pred,
-            "confidence": confidence,
-            "attention": attention,
+            "mu": mu.squeeze(-1),
+            "ln_sigma": sigma.squeeze(-1),
+            "cache": cache,
+            "attention": attention
         }
 
     def reset(self):
@@ -252,11 +273,11 @@ class TimeSeriesTransformer(pl.LightningModule):
         with torch.no_grad():
             metric_output = self.metric_object(
                 outputs={
-                    "pred": model_output["mu"]
+                    "pred": model_output["mu"].exp()
                 },
                 target=target,
                 mask=loss_output["valid_mask"],
-                reweight_by=(1 / (model_output["ln_sigma"] + (1 - loss_output["valid_mask"].float()) * 1e6)).softmax(
+                reweight_by=((-model_output["ln_sigma"] + (1 - loss_output["valid_mask"].float()) * -1e6)).softmax(
                     dim=1),
             )
         log = {
@@ -302,6 +323,9 @@ class TimeSeriesTransformer(pl.LightningModule):
             self.filenames[0]
             , mapping=self.mapping
             , front_padding_num=self.front_padding_num
+            , train_start_date=self.train_start_date
+            , valid_start_date=self.valid_start_date
+            , position_oov_size=self.position_oov_size
         )
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers)
 
@@ -330,7 +354,9 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   seed=101,
                                   lr=1e-4,
                                   asset_list='../data/asset_list.txt',
-                                  front_padding_num=3
+                                  front_padding_num=3,
+                                  train_start_date="2008-01-01",
+                                  valid_start_date="2013-01-01",
                                   )
 
     trainer = pl.Trainer(
