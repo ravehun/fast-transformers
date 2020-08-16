@@ -224,9 +224,7 @@ class TimeSeriesTransformer(pl.LightningModule):
             stock_embedding = self.stock_embeddings(stock_id)
             x[:, :self.front_padding_num, :] = stock_embedding
 
-
         relative_days_off = meta["days_off"]
-        # x = x + relative_pos
         regress_embeddings, _ = self.transformer(inputs_embeds=x,
                                                  attention_mask=seq_mask,
                                                  position_ids=relative_days_off,
@@ -253,6 +251,7 @@ class TimeSeriesTransformer(pl.LightningModule):
             regress_embeddings, _ = self.transformer(inputs_embeds=x,
                                                      attention_mask=seq_mask,
                                                      position_ids=relative_days_off,
+                                                     output_attentions=True,
                                                      **transformer_kwargs)
 
             mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
@@ -355,7 +354,7 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   lr=1e-4,
                                   asset_list='../data/asset_list.txt',
                                   front_padding_num=3,
-                                  train_start_date="2008-01-01",
+                                  train_start_date="2009-01-01",
                                   valid_start_date="2013-01-01",
                                   )
 
