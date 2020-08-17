@@ -68,7 +68,7 @@ class MyIterableDataset(IterableDataset):
     def load(self):
         npz = np.load(self.fn)
 
-        def group_mask(xs, valid_split):
+        def get_group_mask(xs, valid_split):
             origin_shape = xs.shape
 
             def get_group(x):
@@ -105,10 +105,11 @@ class MyIterableDataset(IterableDataset):
             relative_days_offset = np.pad(relative_days_offset
                                           , [(0, 0), (self.front_padding_num, 0)]
                                           , constant_values=0.0)
-
+        group_mask = get_group_mask(relative_days_offset, relative_valid_start_offset)
+        group_mask = group_mask * (label > 0).astype(group_mask.dtype)
         self.feature = torch.tensor(feature, dtype=torch.float32)
         self.label = torch.tensor(label, dtype=torch.float32)
-        self.group = torch.tensor(group_mask(relative_days_offset, relative_valid_start_offset), dtype=torch.float32)
+        self.group = torch.tensor(group_mask, dtype=torch.float32)
 
         self.stock_id = np.pad(stock_id.reshape([-1, 1]), [(0, 0), (1, 1)], mode='constant',
                                constant_values=self.seg_token)
@@ -235,7 +236,7 @@ class TimeSeriesTransformer(pl.LightningModule):
             "ln_sigma": sigma.squeeze(-1),
         }
 
-    def pred_with_attention(self, x, meta=None):
+    def pred_with_attention(self, x, meta=None, **transformer_kwargs):
         with torch.no_grad():
             seq_mask = (x[..., 0] > 0)
             x = self.model_projection(x) * math.sqrt(self.project_dimension)
@@ -248,11 +249,11 @@ class TimeSeriesTransformer(pl.LightningModule):
             relative_days_off = meta["days_off"]
 
             # x = x + relative_pos
-            regress_embeddings, _ = self.transformer(inputs_embeds=x,
-                                                     attention_mask=seq_mask,
-                                                     position_ids=relative_days_off,
-                                                     output_attentions=True,
-                                                     **transformer_kwargs)
+            regress_embeddings, cache, attention = self.transformer(inputs_embeds=x,
+                                                                    attention_mask=seq_mask,
+                                                                    position_ids=relative_days_off,
+                                                                    output_attentions=True,
+                                                                    **transformer_kwargs)
 
             mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
         return {
@@ -269,16 +270,16 @@ class TimeSeriesTransformer(pl.LightningModule):
         x, target, meta = batch
         model_output = self(x, meta)
         loss_output = self.loss(model_output, target, group=meta["group"])
-        with torch.no_grad():
-            metric_output = self.metric_object(
-                outputs={
-                    "pred": model_output["mu"].exp()
-                },
-                target=target,
-                mask=loss_output["valid_mask"],
-                reweight_by=((-model_output["ln_sigma"] + (1 - loss_output["valid_mask"].float()) * -1e6)).softmax(
-                    dim=1),
-            )
+        # with torch.no_grad():
+        #     metric_output = self.metric_object(
+        #         outputs={
+        #             "pred": model_output["mu"].exp()
+        #         },
+        #         target=target,
+        #         mask=loss_output["valid_mask"],
+        #         reweight_by=((-model_output["ln_sigma"] + (1 - loss_output["valid_mask"].float()) * -1e6)).softmax(
+        #             dim=1),
+        #     )
         log = {
             "train_loss": loss_output["train_loss"]
             , "valid_loss": loss_output["valid_loss"]
@@ -288,8 +289,8 @@ class TimeSeriesTransformer(pl.LightningModule):
         ret = {
             'loss': loss_output["train_loss"],
             "valid_loss": loss_output["valid_loss"],
-            "diff": metric_output["diff"],
-            "original": metric_output["original"],
+            # "diff": metric_output["diff"],
+            # "original": metric_output["original"],
             "log": log,
         }
 
@@ -302,12 +303,12 @@ class TimeSeriesTransformer(pl.LightningModule):
         def _agg_by_key(key):
             return torch.stack([x[key] for x in outputs]).mean()
 
-        # train_loss = torch.stack([x["loss"] for x in outputs]).mean()
-        # valid_loss = torch.stack([x["valid_loss"] for x in outputs]).mean()
-        # mlabe = torch.stack([x["r-d-mlabe"] for x in outputs]).mean()
-        keys = ["loss", "valid_loss", "diff", 'original']
-        train_loss, valid_loss, diff, original = [_agg_by_key(key) for key in keys]
-        print(f"train loss: {train_loss:.6f}, valid_loss: {valid_loss:.6f}, diff: {diff:.6f} original: {original:.6f}")
+        keys = ["loss", "valid_loss",
+                # "diff", 'original'
+                ]
+        train_loss, valid_loss = [_agg_by_key(key) for key in keys]
+        print(f"train loss: {train_loss:.6f}, valid_loss: {valid_loss:.6f}")
+        # print(f"train loss: {train_loss:.6f}, valid_loss: {valid_loss:.6f}, diff: {diff:.6f} original: {original:.6f}")
         return {"train_loss": train_loss, "val_loss": valid_loss}
 
     def configure_optimizers(self):

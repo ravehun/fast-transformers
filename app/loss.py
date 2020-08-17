@@ -41,10 +41,11 @@ class MaskedMetric(Metric):
 
         mask = mask.float()
         metric = self.func(target=target, **outputs)
-        metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
         if reduction:
+            metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
             metric = metric.mean()
-
+        else:
+            metric = (mask * metric) / (mask.sum(dim=1, keepdim=True) + eps)
         return metric
 
 

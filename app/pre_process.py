@@ -100,13 +100,14 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
 @click.option('--output-fn', type=str,
               default="/Users/hehehe/PycharmProjects/fast-transformers/data/sample_record_npz/", show_default=True,
               help="training data path")
+@click.option('--window', type=int, default=20, show_default=True, help="label look forward window size")
 @click.option('--min-seq-len', type=int, default=800, show_default=True, help="minimum sequence length")
-@click.option('--max-seq-len', type=int, default=1500, show_default=True, help="minimum sequence length")
+@click.option('--max-seq-len', type=int, default=1500, show_default=True, help="maximum sequence length")
 @click.option('--train-date', type=str, default='2009-01-01', show_default=True, help="example start")
 @click.option('--valid-date', type=str, default='2014-01-01', show_default=True, help="example end")
-def train(data_dir, min_seq_len, max_seq_len, train_date, valid_date, output_fn):
+def train(data_dir, min_seq_len, max_seq_len, train_date, valid_date, output_fn,window):
     text_files = glob.glob(data_dir)
-    create_tf_records(text_files, min_seq_len, max_seq_len, train_date=train_date, valid_date=valid_date,
+    create_tf_records(text_files, min_seq_len, max_seq_len, train_date=train_date, valid_date=valid_date,window=window
                       output_fn=output_fn)
     print("Pre-processing is done............")
 
