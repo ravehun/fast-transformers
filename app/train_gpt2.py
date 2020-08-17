@@ -307,7 +307,7 @@ class TimeSeriesTransformer(pl.LightningModule):
                 # "diff", 'original'
                 ]
         train_loss, valid_loss = [_agg_by_key(key) for key in keys]
-        print(f"train loss: {train_loss:.6f}, valid_loss: {valid_loss:.6f}")
+        print(f"tr: {train_loss:.6f}, va: {valid_loss:.6f}")
         # print(f"train loss: {train_loss:.6f}, valid_loss: {valid_loss:.6f}, diff: {diff:.6f} original: {original:.6f}")
         return {"train_loss": train_loss, "val_loss": valid_loss}
 
