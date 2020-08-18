@@ -1,19 +1,12 @@
 import warnings
 
 import click
-import tqdm
-from pytorch_lightning.callbacks import EarlyStopping
-from pytorch_lightning.metrics import RMSLE, Metric
-from pytorch_lightning.metrics.functional import mse
-from torch.optim import SGD
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from transformers import GPT2Config, GPT2Model
 
 warnings.filterwarnings("ignore")
 
 import math
-import random
-import pandas as pd
-from torch import functional as F
 from torch.utils.data import DataLoader, IterableDataset
 import numpy as np
 import glob
@@ -87,9 +80,9 @@ class MyIterableDataset(IterableDataset):
 
         ab_start_days_offset = CommonUtils.date_to_idx(self.train_start_date)
         relative_valid_start_offset = CommonUtils.date_to_idx(self.valid_start_date) - ab_start_days_offset
-        volume = npz["input"][..., 4:5]
-        volume = self.norm(volume)
-        feature = np.concatenate([npz["input"][..., :4], volume], axis=2)
+        # volume = npz["input"][..., 4:5]
+        # volume = self.norm(volume)
+        feature = np.log(npz["input"] + 1e-4)
         label = npz["target"]
         relative_days_offset = (npz["days_offset"] - ab_start_days_offset + self.position_oov_size) * \
                                (npz["days_offset"] > 0).astype(npz["days_offset"].dtype)
@@ -370,9 +363,11 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         # use_amp=False,
         gradient_clip_val=2.5,
         accumulate_grad_batches=accumulate_grad_batches,
-        callbacks=[
-            TrainEarlyStopping(patience=5)
-        ],
+        checkpoint_callback=ModelCheckpoint(
+            monitor='valid_loss',
+        ),
+        default_root_dir='',
+        # early_stop_callback=TrainEarlyStopping(patience=5),
         # weights_save_path='lightning_logs1',
         show_progress_bar=False,
         # resume_from_checkpoint='lightning_logs/version_8/checkpoints/epoch=2.ckpt'
