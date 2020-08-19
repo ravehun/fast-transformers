@@ -2,18 +2,18 @@ import torch
 from pytorch_lightning.metrics import Metric
 
 
-class Loss_functions():
+class LossFunctions():
 
     @staticmethod
-    def ape(pred, target, eps=1e-6):
+    def ape(pred, target, eps=1e-6, **kwargs):
         return 100 * abs((pred - target) / (target + eps))
 
     @staticmethod
-    def nll_lognorm(mu, ln_sigma, target, eps=1e-6):
+    def nll_lognorm(mu, ln_sigma, target, eps=1e-6, **kwargs):
         return ln_sigma + (((target + eps).log() - mu) / ln_sigma.exp()) ** 2 / 2
 
     @staticmethod
-    def mlabe(pred, target, eps=1e-6):
+    def mlabe(pred, target, eps=1e-6, **kwargs):
         return torch.log(((pred - target) / (target + eps)).abs() + 1)
 
 
@@ -26,6 +26,7 @@ class MaskedMetric(Metric):
                 outputs: dict,
                 target: torch.Tensor,
                 mask: torch.Tensor,
+                confidence=None,
                 eps=1e-6,
                 reduction=True,
                 *args,
@@ -35,17 +36,23 @@ class MaskedMetric(Metric):
             if len(x.shape) != dim:
                 raise ValueError(f"expect {dim}, actual {len(x.shape)})")
 
-        # _shape_check(outputs, 2)
         _shape_check(target, 2)
         _shape_check(mask, 2)
 
         mask = mask.float()
+        # print(f"confidence ,{confidence}")
+        if confidence is not None:
+            weight = (confidence + (1 - mask) * (-1e6)).softmax(1)
+            # print(f"confidence weight,{weight}")
+        else:
+            weight = 1 / (mask.sum(dim=1,keepdim=True) + eps)
+            # print(f"no confidence weight,{weight}")
         metric = self.func(target=target, **outputs)
         if reduction:
-            metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
+            metric = (weight * metric).sum(dim=1)
             metric = metric.mean()
         else:
-            metric = (mask * metric) / (mask.sum(dim=1, keepdim=True) + eps)
+            metric = (weight * metric)
         return metric
 
 
@@ -85,11 +92,16 @@ class SeqGroupMetric(MaskedMetric):
         # group = meta["group"]
         train_mask = (group == SeqGroupMetric.TRAIN)
         valid_mask = (group == SeqGroupMetric.VALID)
-        train_loss = super(SeqGroupMetric, self).forward(outputs=outputs, target=target,
-                                                         mask=train_mask, reduction=reduction)
+
+        train_loss = super(SeqGroupMetric, self) \
+            .forward(outputs=outputs, target=target,
+                     confidence=outputs.get("confidence"),
+                     mask=train_mask, reduction=reduction)
         with torch.no_grad():
-            valid_loss = super(SeqGroupMetric, self).forward(outputs=outputs, target=target,
-                                                             mask=valid_mask, reduction=reduction)
+            valid_loss = super(SeqGroupMetric, self) \
+                .forward(outputs=outputs, target=target,
+                         confidence=outputs.get("confidence"),
+                         mask=valid_mask, reduction=reduction)
 
         return {
             "train_loss": train_loss,
@@ -101,24 +113,24 @@ class SeqGroupMetric(MaskedMetric):
 
 class MaskedMLABE(SeqGroupMetric):
     def __init__(self):
-        super(MaskedMLABE, self).__init__(Loss_functions.mlabe, "MaskMeanLogAbsoluteBoostError")
+        super(MaskedMLABE, self).__init__(LossFunctions.mlabe, "MaskMeanLogAbsoluteBoostError")
 
 
 class MaskedReweightedDiffMLABE(MaskedReweightedDiff):
     def __init__(self):
-        super(MaskedReweightedDiffMLABE, self).__init__(Loss_functions.mlabe, "MaskedReweightedDiffMLABE")
+        super(MaskedReweightedDiffMLABE, self).__init__(LossFunctions.mlabe, "MaskedReweightedDiffMLABE")
 
 
 class MaskedAPE(MaskedMetric):
     def __init__(self):
-        super(MaskedAPE, self).__init__(Loss_functions.ape, "MaskAPE")
+        super(MaskedAPE, self).__init__(LossFunctions.ape, "MaskAPE")
 
 
 class APE(SeqGroupMetric):
     def __init__(self):
-        super(APE, self).__init__(Loss_functions.ape, "MaskAPE")
+        super(APE, self).__init__(LossFunctions.ape, "MaskAPE")
 
 
 class NegtiveLogNormLoss(SeqGroupMetric):
     def __init__(self):
-        super(NegtiveLogNormLoss, self).__init__(Loss_functions.nll_lognorm, "LogNormLoss")
+        super(NegtiveLogNormLoss, self).__init__(LossFunctions.nll_lognorm, "LogNormLoss")

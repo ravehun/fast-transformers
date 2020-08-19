@@ -164,7 +164,7 @@ class TimeSeriesTransformer(pl.LightningModule):
         self.file_re = file_re
         self.batch_size = batch_size
         self.metric_object = MaskedReweightedDiffMLABE()
-        self.output_projection = nn.Linear(n_heads * value_dimensions, 2)
+        self.output_projection = nn.Linear(n_heads * value_dimensions, 3)
         # self.output_projection = nn.Conv1d(n_heads * value_dimensions, 1, 1)
         if type(file_re) != dict:
             self.filenames = glob.glob(file_re)
@@ -223,10 +223,11 @@ class TimeSeriesTransformer(pl.LightningModule):
                                                  attention_mask=seq_mask,
                                                  position_ids=relative_days_off,
                                                  **transformer_kwargs)
-        mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
+        mu, sigma, confidence = self.output_projection(regress_embeddings).split(1, -1)
         return {
             "mu": mu.squeeze(-1),
             "ln_sigma": sigma.squeeze(-1),
+            "confidence": confidence.squeeze(-1)
         }
 
     def pred_with_attention(self, x, meta=None, **transformer_kwargs):
@@ -248,12 +249,13 @@ class TimeSeriesTransformer(pl.LightningModule):
                                                                     output_attentions=True,
                                                                     **transformer_kwargs)
 
-            mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
+            mu, sigma,confidence = self.output_projection(regress_embeddings).split(1, -1)
         return {
             "mu": mu.squeeze(-1),
             "ln_sigma": sigma.squeeze(-1),
+            "confidence": confidence,
             "cache": cache,
-            "attention": attention
+            "attention": attention,
         }
 
     def reset(self):
