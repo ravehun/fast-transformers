@@ -210,15 +210,25 @@ class TimeSeriesTransformer(pl.LightningModule):
         else:
             return 'cpu'
 
-    def forward(self, x, meta, **transformer_kwargs):
+    def attach_head(self, x, meta):
         seq_mask = (x[..., 0] > 0)
-        x = self.model_projection(x) * math.sqrt(self.project_dimension)
+        relative_days_off = meta["days_off"]
+        b, s = relative_days_off.shape[:2]
+
         if self.front_padding_num > 0:
             stock_id = meta["stock_id"]
             stock_embedding = self.stock_embeddings(stock_id)
             x[:, :self.front_padding_num, :] = stock_embedding
+            seq_mask[..., :self.front_padding_num] = torch.ones_like(seq_mask[..., :self.front_padding_num])
+            relative_days_off[..., :self.front_padding_num] = torch.arange(1, self.front_padding_num + 1).repeat(
+                [b, 1])
+        return x, seq_mask, relative_days_off
 
-        relative_days_off = meta["days_off"]
+    def forward(self, x, meta, **transformer_kwargs):
+
+        x = self.model_projection(x) * math.sqrt(self.project_dimension)
+        x, seq_mask, relative_days_off = self.attach_head(x, meta)
+
         regress_embeddings, _ = self.transformer(inputs_embeds=x,
                                                  attention_mask=seq_mask,
                                                  position_ids=relative_days_off,
@@ -231,13 +241,14 @@ class TimeSeriesTransformer(pl.LightningModule):
 
     def pred_with_attention(self, x, meta=None, **transformer_kwargs):
         with torch.no_grad():
-            seq_mask = (x[..., 0] > 0)
             x = self.model_projection(x) * math.sqrt(self.project_dimension)
+            x, seq_mask, relative_days_off = self.attach_head(x, meta)
 
             if self.front_padding_num > 0:
                 stock_id = meta["stock_id"]
                 stock_embedding = self.stock_embeddings(stock_id)
                 x[:, :self.front_padding_num, :] = stock_embedding
+                seq_mask[..., :self.front_padding_num] = torch.ones_like(seq_mask[..., :self.front_padding_num])
 
             relative_days_off = meta["days_off"]
 
