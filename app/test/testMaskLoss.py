@@ -109,7 +109,7 @@ class MaskLoss(unittest.TestCase):
 
     def testLogNorm(self):
         from loss import NegtiveLogNormLoss
-        metric = NegtiveLogNormLoss
+        metric = NegtiveLogNormLoss()
         mock = {
             "mu": torch.tensor([1.]),
             "ln_sigma": torch.tensor([1.]).log(),
@@ -118,7 +118,7 @@ class MaskLoss(unittest.TestCase):
         import math
         expect = (-torch.distributions.LogNormal(mock["mu"], mock["ln_sigma"].exp()).log_prob(mock["target"])) \
                  - (math.sqrt(2 * math.pi) * mock["target"]).log()
-        self._almost_equals(metric.metric(**mock), expect)
+        self._almost_equals(metric.func(**mock), expect)
 
         mock = {
             "mu": torch.tensor([3.]),
@@ -128,7 +128,7 @@ class MaskLoss(unittest.TestCase):
         import math
         expect = (-torch.distributions.LogNormal(mock["mu"], mock["ln_sigma"].exp()).log_prob(mock["target"])) \
                  - (math.sqrt(2 * math.pi) * mock["target"]).log()
-        self._almost_equals(metric.metric(**mock), expect)
+        self._almost_equals(metric.func(**mock), expect)
 
 
 if __name__ == '__main__':

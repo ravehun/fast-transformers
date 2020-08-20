@@ -1,7 +1,7 @@
 import warnings
 
 import click
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint
 from transformers import GPT2Config, GPT2Model
 
 warnings.filterwarnings("ignore")
@@ -17,12 +17,6 @@ import torch.nn as nn
 from common_utils import CommonUtils, Mapping
 
 from loss import *
-
-
-class TrainEarlyStopping(EarlyStopping):
-    def on_train_end(self, trainer, pl_module):
-        super(TrainEarlyStopping, self).on_train_end(trainer, pl_module)
-        super(TrainEarlyStopping, self).on_validation_end(trainer, pl_module)
 
 
 class MyIterableDataset(IterableDataset):
@@ -80,9 +74,9 @@ class MyIterableDataset(IterableDataset):
 
         ab_start_days_offset = CommonUtils.date_to_idx(self.train_start_date)
         relative_valid_start_offset = CommonUtils.date_to_idx(self.valid_start_date) - ab_start_days_offset
-        # volume = npz["input"][..., 4:5]
-        # volume = self.norm(volume)
-        feature = np.log(npz["input"] + 1e-4)
+        volume = npz["input"][..., 4:5]
+        volume = self.norm(volume)
+        feature = np.concatenate([npz["input"][..., :4], volume], axis=2)
         label = npz["target"]
         relative_days_offset = (npz["days_offset"] - ab_start_days_offset + self.position_oov_size) * \
                                (npz["days_offset"] > 0).astype(npz["days_offset"].dtype)
@@ -244,15 +238,6 @@ class TimeSeriesTransformer(pl.LightningModule):
             x = self.model_projection(x) * math.sqrt(self.project_dimension)
             x, seq_mask, relative_days_off = self.attach_head(x, meta)
 
-            if self.front_padding_num > 0:
-                stock_id = meta["stock_id"]
-                stock_embedding = self.stock_embeddings(stock_id)
-                x[:, :self.front_padding_num, :] = stock_embedding
-                seq_mask[..., :self.front_padding_num] = torch.ones_like(seq_mask[..., :self.front_padding_num])
-
-            relative_days_off = meta["days_off"]
-
-            # x = x + relative_pos
             regress_embeddings, cache, attention = self.transformer(inputs_embeds=x,
                                                                     attention_mask=seq_mask,
                                                                     position_ids=relative_days_off,

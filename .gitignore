@@ -8,3 +8,5 @@ dist
 data
 *.cache
 app/lightning_logs
+/app/.coverage
+/app/test/.coverage
