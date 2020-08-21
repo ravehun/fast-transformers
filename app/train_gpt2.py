@@ -22,13 +22,14 @@ from loss import *
 class MyIterableDataset(IterableDataset):
 
     def __init__(self, fn, train_start_date, valid_start_date, position_oov_size, mapping=None, front_padding_num=0,
-                 seg_token=1):
+                 stock_id_header_token=1, stock_price_start_token=2):
         self.fn = fn
         self.feature = None
         self.valid_start_date = valid_start_date
         self.mapping = mapping
         self.front_padding_num = front_padding_num
-        self.seg_token = seg_token
+        self.stock_id_token = stock_id_header_token
+        self.price_start_token = stock_price_start_token
         self.train_start_date = train_start_date
         self.position_oov_size = position_oov_size
 
@@ -47,7 +48,8 @@ class MyIterableDataset(IterableDataset):
             "min_max": lambda: (x.max(axis=1, keepdims=True) - x) / (
                     x.max(axis=1, keepdims=True) - x.min(axis=1, keepdims=True)),
             "z_score": lambda: (x - x.mean(axis=1, keepdims=True)) / (x.std(axis=1, keepdims=True) + 1e-6),
-            "affine": lambda: MyIterableDataset.affine(x, kwargs["inf"], kwargs["sup"])
+            "affine": lambda: MyIterableDataset.affine(x, kwargs["inf"], kwargs["sup"]),
+            "log": lambda: (x + 1e-6).log(),
         }
 
         return f[n_type]()
@@ -98,8 +100,11 @@ class MyIterableDataset(IterableDataset):
         self.label = torch.tensor(label, dtype=torch.float32)
         self.group = torch.tensor(group_mask, dtype=torch.float32)
 
-        self.stock_id = np.pad(stock_id.reshape([-1, 1]), [(0, 0), (1, 1)], mode='constant',
-                               constant_values=self.seg_token)
+        self.stock_id = np.stack([
+            np.ones_like(stock_id) * self.stock_id_token,
+            stock_id,
+            np.ones_like(stock_id) * self.price_start_token,
+        ], axis=1)
 
         self.stock_id = torch.tensor(self.stock_id, dtype=torch.int64)
         self.days_offset = torch.tensor(relative_days_offset, dtype=torch.int64)
@@ -111,6 +116,7 @@ class MyIterableDataset(IterableDataset):
         np.random.shuffle(indice)
         for idx in indice:
             x = self.feature[idx]
+            # print(f"x mask {(x[..., 0] > 0).sum(-1)}")
             y = self.label[idx]
             meta = {
                 "stock_name": self.stock_name[idx],
@@ -138,7 +144,7 @@ class TimeSeriesTransformer(pl.LightningModule):
                  seq_len=1000,
                  seed=100,
                  asset_list=None,
-                 front_padding_num=3,
+                 front_padding_num=2,
                  train_start_date=None,
                  valid_start_date=None,
                  **kwargs):
@@ -173,7 +179,8 @@ class TimeSeriesTransformer(pl.LightningModule):
         self.stock_embedings_length = len(self.mapping) + self.stock_oov_size
         self.stock_embeddings = torch.nn.Embedding(self.stock_embedings_length, project_dimension)
         self.front_padding_num = front_padding_num
-        self.seg_token = 1
+        self.stock_id_header_token = 1
+        self.stock_price_start_token = 2
         self.train_start_date = train_start_date
         self.n_positions = int(self.seq_len * 366 / 250) + self.position_oov_size
         config = GPT2Config(
@@ -204,24 +211,27 @@ class TimeSeriesTransformer(pl.LightningModule):
         else:
             return 'cpu'
 
-    def attach_head(self, x, meta):
-        seq_mask = (x[..., 0] > 0)
+    def attach_head(self, x, meta, seq_mask):
+        # print(f"seq_mask {seq_mask.sum(-1)}")
         relative_days_off = meta["days_off"]
         b, s = relative_days_off.shape[:2]
 
         if self.front_padding_num > 0:
             stock_id = meta["stock_id"]
             stock_embedding = self.stock_embeddings(stock_id)
-            x[:, :self.front_padding_num, :] = stock_embedding
-            seq_mask[..., :self.front_padding_num] = torch.ones_like(seq_mask[..., :self.front_padding_num])
+            x[:, :self.front_padding_num + 1, :] = stock_embedding
+            # open price start token
+            seq_mask[..., :self.front_padding_num + 1] = torch.ones_like(seq_mask[..., :self.front_padding_num + 1])
+
             relative_days_off[..., :self.front_padding_num] = torch.arange(1, self.front_padding_num + 1).repeat(
                 [b, 1])
         return x, seq_mask, relative_days_off
 
     def forward(self, x, meta, **transformer_kwargs):
+        seq_mask = (x[..., 0] > 0.1)
 
         x = self.model_projection(x) * math.sqrt(self.project_dimension)
-        x, seq_mask, relative_days_off = self.attach_head(x, meta)
+        x, seq_mask, relative_days_off = self.attach_head(x, meta, seq_mask)
 
         regress_embeddings, _ = self.transformer(inputs_embeds=x,
                                                  attention_mask=seq_mask,
@@ -315,6 +325,8 @@ class TimeSeriesTransformer(pl.LightningModule):
             , train_start_date=self.train_start_date
             , valid_start_date=self.valid_start_date
             , position_oov_size=self.position_oov_size
+            , stock_id_header_token=self.stock_id_header_token
+            , stock_price_start_token=self.stock_price_start_token
         )
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers)
 
@@ -343,7 +355,7 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   seed=101,
                                   lr=1e-4,
                                   asset_list='../data/asset_list.txt',
-                                  front_padding_num=3,
+                                  front_padding_num=2,
                                   train_start_date="2009-01-01",
                                   valid_start_date="2013-01-01",
                                   )
@@ -362,17 +374,16 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         checkpoint_callback=ModelCheckpoint(
             monitor='valid_loss',
         ),
-        default_root_dir='',
         # early_stop_callback=TrainEarlyStopping(patience=5),
         # weights_save_path='lightning_logs1',
-        show_progress_bar=False,
         # resume_from_checkpoint='lightning_logs/version_8/checkpoints/epoch=2.ckpt'
         # precision=16,
-        # tpu_cores=8
+        # tpu_cores=8,
 
     )
 
     trainer.fit(model)
+    # TimeSeriesTransformer.load_from_checkpoint()
 
 
 if __name__ == "__main__":

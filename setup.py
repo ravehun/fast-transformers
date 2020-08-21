@@ -10,10 +10,9 @@
 from functools import lru_cache
 from itertools import dropwhile
 from os import path
-from setuptools import find_packages, setup
 from subprocess import DEVNULL, call
 
-import torch
+from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CppExtension
 
 
@@ -178,7 +177,7 @@ def setup_package():
         packages=find_packages(exclude=["docs", "tests", "scripts", "examples"]),
         ext_modules=get_extensions(),
         cmdclass={"build_ext": BuildExtension},
-        install_requires = ['click', 'tqdm', 'torch==1.5.1', 'pytorch-lightning']
+        install_requires=['click', 'tqdm', 'torch == 1.5.1', 'pytorch-lightning']
     )
 
 
