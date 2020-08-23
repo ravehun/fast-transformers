@@ -1,3 +1,4 @@
+import os
 import warnings
 
 import click
@@ -163,7 +164,7 @@ class TimeSeriesTransformer(pl.LightningModule):
         # self.loss = APE()
         self.file_re = file_re
         self.batch_size = batch_size
-        self.metric_object = MaskedReweightedDiffMLABE()
+        self.metric_object = MaskedMetricMLABE()
         self.output_projection = nn.Linear(n_heads * value_dimensions, 2)
         # self.output_projection = nn.Conv1d(n_heads * value_dimensions, 1, 1)
         if type(file_re) != dict:
@@ -245,8 +246,9 @@ class TimeSeriesTransformer(pl.LightningModule):
 
     def pred_with_attention(self, x, meta=None, **transformer_kwargs):
         with torch.no_grad():
+            seq_mask = (x[..., 0] > 0.1)
             x = self.model_projection(x) * math.sqrt(self.project_dimension)
-            x, seq_mask, relative_days_off = self.attach_head(x, meta)
+            x, seq_mask, relative_days_off = self.attach_head(x, meta, seq_mask)
 
             regress_embeddings, cache, attention = self.transformer(inputs_embeds=x,
                                                                     attention_mask=seq_mask,
@@ -269,25 +271,24 @@ class TimeSeriesTransformer(pl.LightningModule):
         x, target, meta = batch
         model_output = self(x, meta)
         loss_output = self.loss(model_output, target, group=meta["group"])
-        # with torch.no_grad():
-        #     metric_output = self.metric_object(
-        #         outputs={
-        #             "pred": model_output["mu"].exp()
-        #         },
-        #         target=target,
-        #         mask=loss_output["valid_mask"],
-        #         reweight_by=((-model_output["ln_sigma"] + (1 - loss_output["valid_mask"].float()) * -1e6)).softmax(
-        #             dim=1),
-        #     )
+        with torch.no_grad():
+            metric_output = self.metric_object(
+                outputs={
+                    "pred": model_output["mu"].exp()
+                },
+                target=target,
+                mask=loss_output["valid_mask"],
+            )
         log = {
             "train_loss": loss_output["train_loss"]
             , "valid_loss": loss_output["valid_loss"]
-
+            , "metric_output": metric_output
         }
 
         ret = {
             'loss': loss_output["train_loss"],
             "valid_loss": loss_output["valid_loss"],
+            'metric_output': metric_output,
             # "diff": metric_output["diff"],
             # "original": metric_output["original"],
             "log": log,
@@ -303,12 +304,14 @@ class TimeSeriesTransformer(pl.LightningModule):
             return torch.stack([x[key] for x in outputs]).mean()
 
         keys = ["loss", "valid_loss",
+                "metric_output",
                 # "diff", 'original'
                 ]
-        train_loss, valid_loss = [_agg_by_key(key) for key in keys]
-        print(f"tr: {train_loss:.6f}, va: {valid_loss:.6f}")
+        res = [_agg_by_key(key) for key in keys]
+        train_loss, valid_loss, metric_output = res
+        print(f"tr: {train_loss:.6f}, va: {valid_loss:.6f}, mo:,{metric_output:.6f}")
         # print(f"train loss: {train_loss:.6f}, valid_loss: {valid_loss:.6f}, diff: {diff:.6f} original: {original:.6f}")
-        return {"train_loss": train_loss, "val_loss": valid_loss}
+        return {"loss": train_loss, "val_loss": valid_loss}
 
     def configure_optimizers(self):
         # from radam import RAdam
@@ -332,7 +335,8 @@ class TimeSeriesTransformer(pl.LightningModule):
 
 
 @click.command()
-@click.option('--file-re', type=str, default='../data/sample_record_npz/*.npz', show_default=True, help="file regex")
+@click.option('--file-re', type=str, default='../data/sample_record_npz/window:10*.npz', show_default=True,
+              help="file regex")
 @click.option('--batch-size', type=int, default=1, show_default=True, help="batch size")
 @click.option('--attention-type', type=str, default='full', show_default=True, help="file regex")
 @click.option('--gpus', type=int, default=None, show_default=True, help="gpu num")
@@ -372,7 +376,8 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         gradient_clip_val=2.5,
         accumulate_grad_batches=accumulate_grad_batches,
         checkpoint_callback=ModelCheckpoint(
-            monitor='valid_loss',
+            filepath=os.path.join("lightning_logs", '{epoch}-{val_loss:.3f}'),
+            monitor='val_loss',
         ),
         # early_stop_callback=TrainEarlyStopping(patience=5),
         # weights_save_path='lightning_logs1',

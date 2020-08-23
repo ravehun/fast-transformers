@@ -1,14 +1,12 @@
-import csv
 import datetime
 import glob
 import os
-from collections import Counter
+import traceback
 
 import click
 import numpy as np
-import tqdm
-import traceback
 import pandas as pd
+import tqdm
 from common_utils import CommonUtils
 
 _ROOT = os.path.abspath(os.path.dirname(__file__))
@@ -24,11 +22,20 @@ def future(z, window, agg):
     return agg(z.rolling(window))
 
 
+def get_agg_functions_by_name(funcName):
+    return {
+        "max": lambda x: x.max(),
+        "mean": lambda x: x.mean(),
+        "min": lambda x: x.min(),
+    }[funcName]
+
+
 def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
                       , train_date='2008-01-01'
                       , valid_date='2014-01-01'
                       , output_fn=None
                       , window=20
+                      , agg_func=None
                       ):
     # if not os.path.exists(TF_RECORDS):
     #     os.makedirs(TF_RECORDS)
@@ -57,12 +64,12 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
             x = df[feature].values
             if max_seq_len > x.shape[0] > min_seq_len:
                 inputs = np.concatenate([np.zeros([1, len(feature)]), x], axis=0).astype(np.float32)
-                max_within_window = future(df.Close, window, agg=lambda x: x.max())
+                agg_value = future(df.Close, window, agg=get_agg_functions_by_name(agg_func))
                 # min_within_window = future(df.Close, window, agg=lambda x: x.min())
 
-                max_within_window.fillna(0, inplace=True)
+                agg_value.fillna(0, inplace=True)
                 # min_within_window.fillna(0, inplace=True)
-                targets = np.concatenate([max_within_window, np.zeros(1), ], axis=0).astype(np.float32).tolist()
+                targets = np.concatenate([agg_value, np.zeros(1), ], axis=0).astype(np.float32).tolist()
                 days_offset = np.concatenate([np.zeros(1), df.days_offset], axis=0).astype(np.float32)
 
                 # TODO padding front
@@ -96,19 +103,21 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
 
 
 @click.command()
-@click.option('--data-dir', type=str, default="../data/Stocks/a*.txt", show_default=True, help="training data path")
+@click.option('--data-dir', type=str, default="../data/Stocks/nwy*.txt", show_default=True, help="training data path")
 @click.option('--output-fn', type=str,
               default="/Users/hehehe/PycharmProjects/fast-transformers/data/sample_record_npz/", show_default=True,
               help="training data path")
-@click.option('--window', type=int, default=20, show_default=True, help="label look forward window size")
-@click.option('--min-seq-len', type=int, default=800, show_default=True, help="minimum sequence length")
+@click.option('--window', type=int, default=10, show_default=True, help="label look forward window size")
+@click.option('--agg-func', type=str, default="mean", show_default=True, help="label aggregate function")
+@click.option('--min-seq-len', type=int, default=1200, show_default=True, help="minimum sequence length")
 @click.option('--max-seq-len', type=int, default=1500, show_default=True, help="maximum sequence length")
-@click.option('--train-date', type=str, default='2009-01-01', show_default=True, help="example start")
-@click.option('--valid-date', type=str, default='2014-01-01', show_default=True, help="example end")
-def train(data_dir, min_seq_len, max_seq_len, train_date, valid_date, output_fn,window):
+@click.option('--start-date', type=str, default='2009-01-01', show_default=True, help="example start")
+@click.option('--end-date', type=str, default='2014-01-01', show_default=True, help="example end")
+def train(data_dir, min_seq_len, max_seq_len, start_date, end_date, output_fn, window, agg_func):
     text_files = glob.glob(data_dir)
-    create_tf_records(text_files, min_seq_len, max_seq_len, train_date=train_date, valid_date=valid_date,window=window
-                      output_fn=output_fn)
+    create_tf_records(text_files, min_seq_len, max_seq_len, train_date=start_date, valid_date=end_date, window=window,
+                      agg_func=agg_func,
+                      output_fn=os.path.join(output_fn, f"window:{window}-agg:{agg_func}-date:{start_date}:{end_date}"))
     print("Pre-processing is done............")
 
 

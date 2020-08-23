@@ -104,6 +104,11 @@ class MaskedMLABE(SeqGroupMetric):
         super(MaskedMLABE, self).__init__(Loss_functions.mlabe, "MaskMeanLogAbsoluteBoostError")
 
 
+class MaskedMetricMLABE(MaskedMetric):
+    def __init__(self):
+        super().__init__(Loss_functions.mlabe, "MaskedMetricMLABE")
+
+
 class MaskedReweightedDiffMLABE(MaskedReweightedDiff):
     def __init__(self):
         super(MaskedReweightedDiffMLABE, self).__init__(Loss_functions.mlabe, "MaskedReweightedDiffMLABE")
