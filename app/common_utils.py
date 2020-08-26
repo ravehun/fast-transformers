@@ -23,7 +23,7 @@ class Mapping():
     def __init__(self, ):
         pass
     def __len__(self):
-        return self.n2i.shape[0]
+        return self.n2i.max()
 
     def load(self, fn, offset=10):
         data = pd.read_csv(fn, header=None, names=["stock_name"])
