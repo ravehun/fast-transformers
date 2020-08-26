@@ -1,6 +1,7 @@
 from datetime import timedelta, datetime
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
 
 class CommonUtils():
@@ -30,6 +31,8 @@ class Mapping():
 
         self.n2i = data.set_index("stock_name").stock_id
         self.i2n = data.set_index("stock_id").stock_name
+        self.stock_names = self.i2n.values
+
         return self
 
     def name2id(self, names):

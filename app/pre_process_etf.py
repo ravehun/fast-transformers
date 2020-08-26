@@ -64,12 +64,10 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
             x = df[feature].values
             if max_seq_len > x.shape[0] > min_seq_len:
                 inputs = np.concatenate([np.zeros([1, len(feature)]), x], axis=0).astype(np.float32)
-                agg_value = future(df.Close, window, agg=get_agg_functions_by_name(agg_func))
-                # min_within_window = future(df.Close, window, agg=lambda x: x.min())
-
-                agg_value.fillna(0, inplace=True)
-                # min_within_window.fillna(0, inplace=True)
-                targets = np.concatenate([agg_value, np.zeros(1), ], axis=0).astype(np.float32).tolist()
+                # agg_value = future(df.Close, window, agg=get_agg_functions_by_name(agg_func))
+                # agg_value.fillna(0, inplace=True)
+                # # min_within_window.fillna(0, inplace=True)
+                # targets = np.concatenate([agg_value, np.zeros(1), ], axis=0).astype(np.float32).tolist()
                 days_offset = np.concatenate([np.zeros(1), df.days_offset], axis=0).astype(np.float32)
 
                 # TODO padding front
@@ -77,12 +75,12 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
                     return np.pad(x, [(0, max_seq_len - df.shape[0] - 1)] + sd, constant_values=0.0)
 
                 inputs = pad(inputs, sd=[(0, 0)])
-                targets = pad(targets)
+                # targets = pad(targets)
                 days_offset = pad(days_offset).astype(np.int32)
 
                 r_days_offset.append(days_offset)
                 r_input.append(inputs)
-                r_target.append(targets)
+                # r_target.append(targets)
                 r_stock_name.append(stock_name)
         except:
             traceback.print_exc()
@@ -93,8 +91,8 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
 
     data = {
         "input": np.stack(r_input, 0),
-        "target": np.stack(r_target, 0),
-        "stock_name": np.stack(r_stock_name, 0),
+        # "target": np.stack(r_target, 0),
+        "etf_name": np.stack(r_stock_name, 0),
         "days_offset": np.stack(r_days_offset, 0),
     }
     print([f"{k}: {v.shape}" for (k, v) in data.items()])
@@ -103,21 +101,21 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
 
 
 @click.command()
-@click.option('--data-dir', type=str, default="../data/Stocks/nwy*.txt", show_default=True, help="training data path")
+@click.option('--data-dir', type=str, default="../data/Stocks/aa*.txt", show_default=True, help="training data path")
 @click.option('--output-fn', type=str,
               default="/Users/hehehe/PycharmProjects/fast-transformers/data/sample_record_npz/", show_default=True,
               help="training data path")
-@click.option('--window', type=int, default=10, show_default=True, help="label look forward window size")
-@click.option('--agg-func', type=str, default="mean", show_default=True, help="label aggregate function")
+@click.option('--window', type=int, default=20, show_default=True, help="label look forward window size")
+@click.option('--agg-func', type=str, default="max", show_default=True, help="label aggregate function")
 @click.option('--min-seq-len', type=int, default=1200, show_default=True, help="minimum sequence length")
-@click.option('--max-seq-len', type=int, default=1500, show_default=True, help="maximum sequence length")
-@click.option('--start-date', type=str, default='2009-01-01', show_default=True, help="example start")
-@click.option('--end-date', type=str, default='2014-01-01', show_default=True, help="example end")
+@click.option('--max-seq-len', type=int, default=1300, show_default=True, help="maximum sequence length")
+@click.option('--start-date', type=str, default='2012-01-01', show_default=True, help="example start")
+@click.option('--end-date', type=str, default='2017-01-01', show_default=True, help="example end")
 def train(data_dir, min_seq_len, max_seq_len, start_date, end_date, output_fn, window, agg_func):
     text_files = glob.glob(data_dir)
     create_tf_records(text_files, min_seq_len, max_seq_len, train_date=start_date, valid_date=end_date, window=window,
                       agg_func=agg_func,
-                      output_fn=os.path.join(output_fn, f"window:{window}-agg:{agg_func}-date:{start_date}:{end_date}"))
+                      output_fn=os.path.join(output_fn, f"etf-date:{start_date}:{end_date}"))
     print("Pre-processing is done............")
 
 

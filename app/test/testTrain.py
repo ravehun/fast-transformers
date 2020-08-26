@@ -40,7 +40,7 @@ class MyTestCase(unittest.TestCase):
         }
 
         x, seq_mask, relative_days_off = \
-            model.attach_head(**mock)
+            model.attach_temporal_head(**mock)
         self.assertTrue(
             torch.all(x[..., :front_padding_num, :].sum(-1) != 0)
         )

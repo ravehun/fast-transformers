@@ -103,16 +103,16 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
 
 
 @click.command()
-@click.option('--data-dir', type=str, default="../data/Stocks/nwy*.txt", show_default=True, help="training data path")
+@click.option('--data-dir', type=str, default="../data/Stocks/aa*.txt", show_default=True, help="training data path")
 @click.option('--output-fn', type=str,
               default="/Users/hehehe/PycharmProjects/fast-transformers/data/sample_record_npz/", show_default=True,
               help="training data path")
 @click.option('--window', type=int, default=10, show_default=True, help="label look forward window size")
 @click.option('--agg-func', type=str, default="mean", show_default=True, help="label aggregate function")
 @click.option('--min-seq-len', type=int, default=1200, show_default=True, help="minimum sequence length")
-@click.option('--max-seq-len', type=int, default=1500, show_default=True, help="maximum sequence length")
-@click.option('--start-date', type=str, default='2009-01-01', show_default=True, help="example start")
-@click.option('--end-date', type=str, default='2014-01-01', show_default=True, help="example end")
+@click.option('--max-seq-len', type=int, default=1300, show_default=True, help="maximum sequence length")
+@click.option('--start-date', type=str, default='2012-01-01', show_default=True, help="example start")
+@click.option('--end-date', type=str, default='2017-01-01', show_default=True, help="example end")
 def train(data_dir, min_seq_len, max_seq_len, start_date, end_date, output_fn, window, agg_func):
     text_files = glob.glob(data_dir)
     create_tf_records(text_files, min_seq_len, max_seq_len, train_date=start_date, valid_date=end_date, window=window,
