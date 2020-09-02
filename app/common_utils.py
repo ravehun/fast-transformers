@@ -1,7 +1,9 @@
+import logging
 from datetime import timedelta, datetime
 
 import numpy as np
 import pandas as pd
+from scipy.stats import t, norm
 
 
 class CommonUtils():
@@ -15,13 +17,32 @@ class CommonUtils():
     @staticmethod
     def idx_to_date(days, start="1950-01-01"):
         date_format = "%Y-%m-%d"
-        cur = datetime.strptime(start, date_format) + timedelta(days=days)
+        cur = datetime.strptime(start, date_format) + timedelta(days=int(days))
         return cur.isoformat()
+
+    @staticmethod
+    def unstack(x):
+        return [x[i] for i in range(x.shape[0])]
+
+
+class DistUtil():
+    @staticmethod
+    def t_to_norm(x, dropna=True):
+        if dropna:
+            z = x[~np.isnan(x)]
+        else:
+            z = x
+        args = t.fit(z)
+        t_df = t(*args)
+        t_cdf_v = t_df.cdf(x)
+        n_df = norm(0, 1)
+        return n_df.ppf(t_cdf_v)
 
 
 class Mapping():
     def __init__(self, ):
         pass
+
     def __len__(self):
         return self.n2i.max()
 
@@ -40,3 +61,55 @@ class Mapping():
 
     def id2name(self, ids):
         return np.array(list(self.i2n[id] for id in ids))
+
+
+class LoggerUtil():
+    @staticmethod
+    def setup_all():
+        loggers_profiles = [
+            ('dataset', logging.INFO),
+            ("train", logging.INFO),
+        ]
+
+        for n, l in loggers_profiles:
+            LoggerUtil.setup(n, l)
+
+    @staticmethod
+    def setup(name, level=logging.INFO):
+        # def setup(name, level=logging.DEBUG):
+        import logging
+        import sys
+
+        root = logging.getLogger(name)
+        root.setLevel(logging.DEBUG)
+
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(level)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        root.addHandler(handler)
+        return root
+
+    @staticmethod
+    def get_logger(name):
+        root = logging.getLogger(name)
+        return root
+
+
+class CudaMemUtil():
+    @staticmethod
+    def show_mem_usage(divice_id=0):
+        import nvidia_smi
+
+        nvidia_smi.nvmlInit()
+
+        handle = nvidia_smi.nvmlDeviceGetHandleByIndex(divice_id)
+        # card id 0 hardcoded here, there is also a call to get all available card ids, so we could iterate
+
+        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+
+        print("Total memory:", info.total)
+        print("Free memory:", info.free)
+        print("Used memory:", info.used)
+
+        nvidia_smi.nvmlShutdown()

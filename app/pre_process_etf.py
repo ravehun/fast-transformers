@@ -101,7 +101,7 @@ def create_tf_records(text_files, min_seq_len, max_seq_len, per_file_limit=50000
 
 
 @click.command()
-@click.option('--data-dir', type=str, default="../data/Stocks/aa*.txt", show_default=True, help="training data path")
+@click.option('--data-dir', type=str, default="../data/ETFs/*.txt", show_default=True, help="training data path")
 @click.option('--output-fn', type=str,
               default="/Users/hehehe/PycharmProjects/fast-transformers/data/sample_record_npz/", show_default=True,
               help="training data path")
@@ -115,7 +115,7 @@ def train(data_dir, min_seq_len, max_seq_len, start_date, end_date, output_fn, w
     text_files = glob.glob(data_dir)
     create_tf_records(text_files, min_seq_len, max_seq_len, train_date=start_date, valid_date=end_date, window=window,
                       agg_func=agg_func,
-                      output_fn=os.path.join(output_fn, f"etf-date:{start_date}:{end_date}"))
+                      output_fn=os.path.join(output_fn, f"etf-date:{start_date}:{end_date}-"))
     print("Pre-processing is done............")
 
 
