@@ -167,13 +167,13 @@ class TimeSeriesTransformer(pl.LightningModule):
             # """)
             x = torch.cat([header_embedding, x], dim=1)
             seq_mask = torch.cat([
-                torch.ones_like(seq_mask[..., :self.front_padding_num])
+                torch.ones_like(seq_mask[..., :self.front_padding_num], device=self.device)
                 , seq_mask
             ],
                 dim=1,
             )
             days_off = torch.cat([
-                torch.arange(1, self.front_padding_num + 1)
+                torch.arange(1, self.front_padding_num + 1, device=self.device)
                     .repeat([b, 1]),
                 days_off
             ], dim=1)
@@ -291,7 +291,7 @@ x {x.shape}
         res = [_agg_by_key(key) for key in keys]
         train_loss, valid_loss, metric_output = res
         logger.info(f"tr: {train_loss:.6f}, va: {valid_loss:.6f}, mo:,{metric_output:.6f}")
-        return {"loss": train_loss, "val_loss": valid_loss}
+        return {"loss": train_loss, "val_loss": valid_loss, "mo": metric_output}
 
     def configure_optimizers(self):
         # from radam import RAdam
@@ -363,7 +363,7 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   lr=1e-4,
                                   asset_list='../data/asset_list.txt',
                                   etf_list='../data/etf_list.txt',
-                                  coor_fn='../data/stock_most_relevent.parquet',
+                                  coor_fn='../data/stock_positive_most_relevent.parquet',
                                   front_padding_num=3,
                                   train_start_date="2012-01-01",
                                   valid_start_date="2016-01-01",

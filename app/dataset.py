@@ -227,33 +227,49 @@ class MyIterableDataset(IterableDataset):
         repad = np.stack(repad)
         return repad
 
+    def get_by_name(self, name):
+        y, x, anchor, rdf = \
+            self.pull_data_by_stock_name(name, self.coor, self.anchor_ds, self.label)
+        stock_id = self.stock_mapping.name2id([name])[0]
+        anchor_id = self.anchor_mapping.name2id(self.coor[name])
+
+        group = self.get_group_mask(rdf, y, self.relative_valid_start_offset)
+
+        group = self.pad_label(group)
+        y = torch.tensor(self.pad_label(y))
+        meta = {
+            "name": name,
+            "anchor_names": self.coor[name].values,
+        }
+        inputs = {
+            "group": torch.tensor(group, dtype=torch.long),
+            "header_tokens": torch.tensor(self.pad_stock_id(stock_id), dtype=torch.long),
+            "days_off": torch.tensor(rdf, dtype=torch.long),
+            "anchor_feature": torch.tensor(anchor),
+            "stock_feature": torch.tensor(x),
+            "anchor_ids": torch.tensor(anchor_id),
+        }
+        return inputs, y, meta
+
     def __iter__(self):
         if not hasattr(self, 'anchor_ds'):
             self.load()
-
         stock_name_list = self.stock_name.copy()
         np.random.shuffle(stock_name_list)
         for name in stock_name_list:
-            y, x, anchor, rdf = \
-                self.pull_data_by_stock_name(name, self.coor, self.anchor_ds, self.label)
-            stock_id = self.stock_mapping.name2id([name])[0]
-            anchor_id = self.anchor_mapping.name2id(self.coor[name])
-
-            group = self.get_group_mask(rdf, y, self.relative_valid_start_offset)
-
-            group = self.pad_label(group)
-            y = torch.tensor(self.pad_label(y))
-            meta = {
-                "name": name,
-                "anchor_names": self.coor[name].values,
-            }
-            inputs = {
-                "group": torch.tensor(group, dtype=torch.long),
-                "header_tokens": torch.tensor(self.pad_stock_id(stock_id), dtype=torch.long),
-                "days_off": torch.tensor(rdf, dtype=torch.long),
-                "anchor_feature": torch.tensor(anchor),
-                "stock_feature": torch.tensor(x),
-                "anchor_ids": torch.tensor(anchor_id),
-            }
+            inputs, y, meta = self.get_by_name(name)
             yield inputs, y
             # yield inputs, y, meta
+
+    def __getitem__(self, idx):
+        if not hasattr(self, 'anchor_ds'):
+            self.load()
+
+        name = self.stock_name[idx]
+        inputs, y, meta = self.get_by_name(name)
+        return inputs, y
+
+    def __len__(self):
+        if not hasattr(self, 'anchor_ds'):
+            self.load()
+        return len(self.stock_name)
