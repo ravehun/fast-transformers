@@ -1,4 +1,5 @@
 import logging
+import sys
 from datetime import timedelta, datetime
 
 import numpy as np
@@ -65,29 +66,40 @@ class Mapping():
 
 class LoggerUtil():
     @staticmethod
-    def setup_all():
+    def setup_all(fn):
+        handlers = []
+        handlers.append(LoggerUtil.get_handler(None, logging.INFO))
+        if fn is not None:
+            handlers.append(LoggerUtil.get_handler(fn, logging.INFO))
+
         loggers_profiles = [
-            ('dataset', logging.INFO),
-            ("train", logging.INFO),
+            ('dataset', *handlers),
+            ("train", *handlers,),
         ]
 
-        for n, l in loggers_profiles:
-            LoggerUtil.setup(n, l)
+        for args in loggers_profiles:
+            LoggerUtil.setup(*args)
 
     @staticmethod
-    def setup(name, level=logging.INFO):
-        # def setup(name, level=logging.DEBUG):
-        import logging
-        import sys
+    def get_handler(fn, level):
+        if fn is None:
+            hdl = logging.StreamHandler(sys.stdout)
+        else:
+            hdl = logging.FileHandler(fn)
+
+        hdl.setLevel(level)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        hdl.setFormatter(formatter)
+        return hdl
+
+    @staticmethod
+    def setup(name, *handler):
 
         root = logging.getLogger(name)
         root.setLevel(logging.DEBUG)
 
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(level)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        root.addHandler(handler)
+        for x in handler:
+            root.addHandler(x)
         return root
 
     @staticmethod

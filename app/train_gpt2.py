@@ -21,9 +21,7 @@ from common_utils import *
 from loss import *
 from dataset import *
 
-LoggerUtil.setup_all()
 logger = LoggerUtil.get_logger("train")
-
 
 class TimeSeriesTransformer(pl.LightningModule):
     def __init__(self,
@@ -195,8 +193,8 @@ class TimeSeriesTransformer(pl.LightningModule):
         spatial_embeddings = torch.einsum("nli,id->lnd", anchor_feature[0], self.weight[stock_id]) \
                              + self.bias[stock_id][None, None, :]
 
-        logger.debug(f"anchor_ids {anchor_ids.repeat(self.pad_seq_len, 1).shape}"
-                     f"spatial_embeddings {spatial_embeddings.shape}")
+        # logger.debug(f"anchor_ids {anchor_ids.repeat(self.pad_seq_len, 1).shape}"
+        #              f"spatial_embeddings {spatial_embeddings.shape}")
         anchor, _ = self.spatial_transformer(
             inputs_embeds=spatial_embeddings,
             position_ids=anchor_ids.repeat(self.seq_len, 1)
@@ -209,11 +207,11 @@ class TimeSeriesTransformer(pl.LightningModule):
 
         x, seq_mask, relative_days_off = self.attach_temporal_head(x, days_off, seq_mask, header_tokens)
 
-        logger.debug(f"""
-relative_days_off {relative_days_off.shape}
-seq_mask {seq_mask.shape}
-x {x.shape}
-""")
+        #         logger.debug(f"""
+        # relative_days_off {relative_days_off.shape}
+        # seq_mask {seq_mask.shape}
+        # x {x.shape}
+        # """)
         regress_embeddings, _ = \
             self.temporal_transformer(inputs_embeds=x,
                                       attention_mask=seq_mask,
@@ -226,11 +224,34 @@ x {x.shape}
             "ln_sigma": sigma.squeeze(-1),
         }
 
-    def pred_with_attention(self, x, meta=None, **transformer_kwargs):
+    def pred_with_attention(self,
+                            group,
+                            header_tokens,
+                            days_off,
+                            anchor_feature,
+                            stock_feature,
+                            anchor_ids,
+                            **transformer_kwargs):
         with torch.no_grad():
-            seq_mask = (x[..., 0] > 0.1)
-            x = self.temporal_input_projection(x) * math.sqrt(self.project_dimension)
-            x, seq_mask, relative_days_off = self.attach_temporal_head(x, meta, seq_mask)
+            seq_mask = (stock_feature[..., 0] > 0.1)
+            stock_id = header_tokens[0, 1]
+
+            spatial_embeddings = torch.einsum("nli,id->lnd", anchor_feature[0], self.weight[stock_id]) \
+                                 + self.bias[stock_id][None, None, :]
+
+            # logger.debug(f"anchor_ids {anchor_ids.repeat(self.pad_seq_len, 1).shape}"
+            #              f"spatial_embeddings {spatial_embeddings.shape}")
+            anchor, _ = self.spatial_transformer(
+                inputs_embeds=spatial_embeddings,
+                position_ids=anchor_ids.repeat(self.seq_len, 1)
+            )
+            anchor = anchor.sum(1)[None, :, :]
+            anchor = self.spatial2temporal_projection(anchor)
+
+            x = self.temporal_input_projection(stock_feature) + anchor
+            # x = self.temporal_input_projection(stock_feature)
+
+            x, seq_mask, relative_days_off = self.attach_temporal_head(x, days_off, seq_mask, header_tokens)
 
             regress_embeddings, cache, attention = \
                 self.temporal_transformer(inputs_embeds=x,
@@ -290,12 +311,13 @@ x {x.shape}
                 ]
         res = [_agg_by_key(key) for key in keys]
         train_loss, valid_loss, metric_output = res
-        logger.info(f"tr: {train_loss:.6f}, va: {valid_loss:.6f}, mo:,{metric_output:.6f}")
-        return {"loss": train_loss, "val_loss": valid_loss, "mo": metric_output}
+        log = {"loss": train_loss, "val_loss": valid_loss, "mo": metric_output}
+        logger.info(f'step {self.global_step} epoch {self.current_epoch} '
+                    f'tr: {train_loss:.6f}, va: {valid_loss:.6f}, mo:,{metric_output:.6f}')
+
+        return {"loss": train_loss, "val_loss": valid_loss, "mo": metric_output, "log": log}
 
     def configure_optimizers(self):
-        # from radam import RAdam
-        # optimizer = RAdam(self.parameters())
         from torch.optim import Adam
         optimizer = Adam(self.parameters(), lr=self.lr)
         return optimizer
@@ -394,9 +416,10 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
 
     )
 
+    LoggerUtil.setup_all('lightning_logs/train_log.txt')
+
     trainer.fit(model)
     # TimeSeriesTransformer.load_from_checkpoint()
-
 
 if __name__ == "__main__":
     train()
