@@ -83,10 +83,10 @@ class TimeSeriesTransformer(pl.LightningModule):
         self.temporal_stock_embeddings = torch.nn.Embedding(self.stock_embeddings_length
                                                             , temporal_project_dimension)
         self.register_parameter("weight", Parameter(
-            torch.zeros(self.stock_num, stock_input_dimensions, spatial_project_dimension),
+            torch.zeros(self.stock_embeddings_length, stock_input_dimensions, spatial_project_dimension),
         ))
         self.register_parameter("bias", Parameter(
-            torch.zeros(self.stock_num, spatial_project_dimension),
+            torch.zeros(self.stock_embeddings_length, spatial_project_dimension),
         ))
         self.spatial2temporal_projection = nn.Linear(spatial_project_dimension, temporal_project_dimension)
         self.front_padding_num = front_padding_num
