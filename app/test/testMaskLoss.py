@@ -1,12 +1,33 @@
 import unittest
 
+import numpy as np
 import torch
+from loss import Loss_functions
 
 
 class MaskLoss(unittest.TestCase):
 
+    def test_t_log_loss(self):
+        from scipy.stats import t
+        x = np.linspace(-1, 1)
+        z = np.linspace(2, 4)
+        df = 1.3
+        loc = 1.3
+        scale = 1
+        # m = t(df,loc,scale)
+        import scipy
+        lg = scipy.special._ufuncs.loggamma
+        expected = np.array([lg(i) for i in z])
+        actual = torch.lgamma(torch.tensor(z)).numpy()
+        self._almost_equals(actual, expected, 1e-12)
+
+        expected = t.logpdf(x, df, loc, scale)
+        actual = Loss_functions.nll_logt(torch.tensor(x), torch.tensor(df), torch.tensor(loc),
+                                         torch.tensor(scale)).numpy()
+        self._almost_equals(actual, -expected, 1e-6)
+
     def _almost_equals(self, x, y, eps=1e-3):
-        res = all((x - y).abs() < eps)
+        res = all(abs(x - y) < eps)
         if not res:
             print(f"expect {x}, actual {y}")
         self.assertTrue(res)
@@ -27,23 +48,23 @@ class MaskLoss(unittest.TestCase):
     #     expected = torch.tensor([0])
     #     self._almost_equals(expected, metric(**mock1))
 
-        # mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
-        #
-        #          torch.tensor([1, 1, -100]).reshape(1, 3),
-        #          torch.tensor([1, 1, 0]).reshape(1, 3),
-        #          torch.tensor([1, 1, 1]).reshape(1, 3),
-        #          ]
-        # expected = torch.tensor([50])
-        # self._almost_equals(expected, metric(*mock1))
-        #
-        # mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
-        #
-        #          torch.tensor([1, 1, 1]).reshape(1, 3),
-        #          torch.tensor([1, 1, 0]).reshape(1, 3),
-        #          torch.tensor([1, 1, 0]).reshape(1, 3),
-        #          ]
-        # expected = torch.tensor([50])
-        # self._almost_equals(expected, metric(*mock1))
+    # mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
+    #
+    #          torch.tensor([1, 1, -100]).reshape(1, 3),
+    #          torch.tensor([1, 1, 0]).reshape(1, 3),
+    #          torch.tensor([1, 1, 1]).reshape(1, 3),
+    #          ]
+    # expected = torch.tensor([50])
+    # self._almost_equals(expected, metric(*mock1))
+    #
+    # mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
+    #
+    #          torch.tensor([1, 1, 1]).reshape(1, 3),
+    #          torch.tensor([1, 1, 0]).reshape(1, 3),
+    #          torch.tensor([1, 1, 0]).reshape(1, 3),
+    #          ]
+    # expected = torch.tensor([50])
+    # self._almost_equals(expected, metric(*mock1))
 
     def test_APE(self):
         from loss import APE

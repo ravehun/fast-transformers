@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from pytorch_lightning.metrics import Metric
 
@@ -15,6 +16,22 @@ class Loss_functions():
     @staticmethod
     def mlabe(pred, target, eps=1e-6):
         return torch.log(((pred - target) / (target + eps)).abs() + 1)
+
+    @staticmethod
+    def nll_logt(target, df, loc, scale):
+        return -(
+                torch.lgamma((df + 1) / 2) - torch.lgamma(df / 2)
+                + 0.5 * torch.log(scale / np.pi / df)
+                - (df + 1) / 2 * torch.log(1 + scale / df * ((target - loc) ** 2))
+        )
+
+    @staticmethod
+    def dist2(target, pred):
+        return (target - pred) ** 2
+
+    @staticmethod
+    def dist1(target, pred):
+        return (target - pred).abs()
 
 
 class MaskedMetric(Metric):
@@ -82,7 +99,6 @@ class SeqGroupMetric(MaskedMetric):
                 eps=1e-6,
                 reduction=True,
                 *args, **kwargs):
-        # group = meta["group"]
         train_mask = (group == SeqGroupMetric.TRAIN)
         valid_mask = (group == SeqGroupMetric.VALID)
         train_loss = super(SeqGroupMetric, self).forward(outputs=outputs, target=target,
@@ -109,6 +125,11 @@ class MaskedMetricMLABE(MaskedMetric):
         super().__init__(Loss_functions.mlabe, "MaskedMetricMLABE")
 
 
+class SeqMLABE(SeqGroupMetric):
+    def __init__(self):
+        super().__init__(Loss_functions.mlabe, "SeqMLABE")
+
+
 class MaskedReweightedDiffMLABE(MaskedReweightedDiff):
     def __init__(self):
         super(MaskedReweightedDiffMLABE, self).__init__(Loss_functions.mlabe, "MaskedReweightedDiffMLABE")
@@ -127,3 +148,8 @@ class APE(SeqGroupMetric):
 class NegtiveLogNormLoss(SeqGroupMetric):
     def __init__(self):
         super(NegtiveLogNormLoss, self).__init__(Loss_functions.nll_lognorm, "LogNormLoss")
+
+
+class NLLtPdf(SeqGroupMetric):
+    def __init__(self):
+        super(NLLtPdf, self).__init__(Loss_functions.nll_logt, "NLLtPdf")

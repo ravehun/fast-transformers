@@ -60,11 +60,11 @@ class TimeSeriesTransformer(pl.LightningModule):
         # self.spatial_input_projection = nn.Linear(stock_input_dimensions, spatial_project_dimension)
         self.seq_len = seq_len
         self.pad_seq_len = seq_len + front_padding_num
-        self.loss = NegtiveLogNormLoss()
+        self.loss = NLLtPdf()
         self.file_re = stock_fn
         self.batch_size = batch_size
-        self.metric_object = MaskedMetricMLABE()
-        self.output_projection = nn.Linear(temporal_n_heads * temporal_value_dimensions, 2)
+        self.metric_object = SeqGroupMetric(Loss_functions.dist1, "mse")
+        self.output_projection = nn.Linear(temporal_n_heads * temporal_value_dimensions, 3)
         if type(stock_fn) != dict:
             self.filenames = glob.glob(stock_fn)
         self.lr = lr
@@ -142,17 +142,6 @@ class TimeSeriesTransformer(pl.LightningModule):
         else:
             return 'cpu'
 
-    def init_weights(m):
-        if type(m) == nn.Linear:
-            torch.nn.init.xavier_uniform(m.weight)
-            m.bias.data.fill_(0.01)
-
-            init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-            if self.bias is not None:
-                fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
-                bound = 1 / math.sqrt(fan_in)
-                init.uniform_(self.bias, -bound, bound)
-
     def attach_temporal_head(self, x, days_off, seq_mask, header_tokens):
         b, s = days_off.shape[:2]
 
@@ -217,57 +206,58 @@ class TimeSeriesTransformer(pl.LightningModule):
                                       attention_mask=seq_mask,
                                       position_ids=relative_days_off,
                                       **transformer_kwargs)
-        mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
+        ln_df, loc, ln_scale = self.output_projection(regress_embeddings).split(1, -1)
         # print(f"relative_days_off {relative_days_off} {relative_days_off[0, :10]}")
         return {
-            "mu": mu.squeeze(-1),
-            "ln_sigma": sigma.squeeze(-1),
+            "df": ln_df.exp().squeeze(-1),
+            "loc": loc.squeeze(-1),
+            "scale": ln_scale.exp().squeeze(-1),
         }
 
-    def pred_with_attention(self,
-                            group,
-                            header_tokens,
-                            days_off,
-                            anchor_feature,
-                            stock_feature,
-                            anchor_ids,
-                            **transformer_kwargs):
-        with torch.no_grad():
-            seq_mask = (stock_feature[..., 0] > 0.1)
-            stock_id = header_tokens[0, 1]
-
-            spatial_embeddings = torch.einsum("nli,id->lnd", anchor_feature[0], self.weight[stock_id]) \
-                                 + self.bias[stock_id][None, None, :]
-
-            # logger.debug(f"anchor_ids {anchor_ids.repeat(self.pad_seq_len, 1).shape}"
-            #              f"spatial_embeddings {spatial_embeddings.shape}")
-            anchor, _ = self.spatial_transformer(
-                inputs_embeds=spatial_embeddings,
-                position_ids=anchor_ids.repeat(self.seq_len, 1)
-            )
-            anchor = anchor.sum(1)[None, :, :]
-            anchor = self.spatial2temporal_projection(anchor)
-
-            x = self.temporal_input_projection(stock_feature) + anchor
-            # x = self.temporal_input_projection(stock_feature)
-
-            x, seq_mask, relative_days_off = self.attach_temporal_head(x, days_off, seq_mask, header_tokens)
-
-            regress_embeddings, cache, attention = \
-                self.temporal_transformer(inputs_embeds=x,
-                                          attention_mask=seq_mask,
-                                          position_ids=relative_days_off,
-                                          output_attentions=True,
-                                          **transformer_kwargs)
-
-            mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
-        return {
-            "mu": mu.squeeze(-1),
-            "ln_sigma": sigma.squeeze(-1),
-            "cache": cache,
-            "attention": attention,
-            "regress_embeddings": regress_embeddings,
-        }
+    # def pred_with_attention(self,
+    #                         group,
+    #                         header_tokens,
+    #                         days_off,
+    #                         anchor_feature,
+    #                         stock_feature,
+    #                         anchor_ids,
+    #                         **transformer_kwargs):
+    #     with torch.no_grad():
+    #         seq_mask = (stock_feature[..., 0] > 0.1)
+    #         stock_id = header_tokens[0, 1]
+    #
+    #         spatial_embeddings = torch.einsum("nli,id->lnd", anchor_feature[0], self.weight[stock_id]) \
+    #                              + self.bias[stock_id][None, None, :]
+    #
+    #         # logger.debug(f"anchor_ids {anchor_ids.repeat(self.pad_seq_len, 1).shape}"
+    #         #              f"spatial_embeddings {spatial_embeddings.shape}")
+    #         anchor, _ = self.spatial_transformer(
+    #             inputs_embeds=spatial_embeddings,
+    #             position_ids=anchor_ids.repeat(self.seq_len, 1)
+    #         )
+    #         anchor = anchor.sum(1)[None, :, :]
+    #         anchor = self.spatial2temporal_projection(anchor)
+    #
+    #         x = self.temporal_input_projection(stock_feature) + anchor
+    #         # x = self.temporal_input_projection(stock_feature)
+    #
+    #         x, seq_mask, relative_days_off = self.attach_temporal_head(x, days_off, seq_mask, header_tokens)
+    #
+    #         regress_embeddings, cache, attention = \
+    #             self.temporal_transformer(inputs_embeds=x,
+    #                                       attention_mask=seq_mask,
+    #                                       position_ids=relative_days_off,
+    #                                       output_attentions=True,
+    #                                       **transformer_kwargs)
+    #
+    #         mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
+    #     return {
+    #         "mu": mu.squeeze(-1),
+    #         "ln_sigma": sigma.squeeze(-1),
+    #         "cache": cache,
+    #         "attention": attention,
+    #         "regress_embeddings": regress_embeddings,
+    #     }
 
     def reset(self):
         pass
@@ -279,21 +269,23 @@ class TimeSeriesTransformer(pl.LightningModule):
         with torch.no_grad():
             metric_output = self.metric_object(
                 outputs={
-                    "pred": model_output["mu"].exp()
+                    "pred": model_output["loc"]
                 },
                 target=target,
-                mask=loss_output["valid_mask"],
+                group=inputs["group"]
             )
         log = {
             "train_loss": loss_output["train_loss"]
             , "valid_loss": loss_output["valid_loss"]
-            , "metric_output": metric_output
+            , "train_mse": metric_output["train_loss"]
+            , "val_mse": metric_output["valid_loss"]
         }
 
         ret = {
             'loss': loss_output["train_loss"],
             "valid_loss": loss_output["valid_loss"],
-            'metric_output': metric_output,
+            "train_mse": metric_output["train_loss"],
+            "val_mse": metric_output["valid_loss"],
             "log": log,
         }
 
@@ -307,15 +299,17 @@ class TimeSeriesTransformer(pl.LightningModule):
             return torch.stack([x[key] for x in outputs]).mean()
 
         keys = ["loss", "valid_loss",
-                "metric_output",
+                "train_mse", 'val_mse'
                 ]
         res = [_agg_by_key(key) for key in keys]
-        train_loss, valid_loss, metric_output = res
-        log = {"loss": train_loss, "val_loss": valid_loss, "mo": metric_output}
+        train_loss, valid_loss, t_m, v_m = res
+        log = {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m}
         logger.info(f'step {self.global_step} epoch {self.current_epoch} '
-                    f'tr: {train_loss:.6f}, va: {valid_loss:.6f}, mo:,{metric_output:.6f}')
+                    f'tr: {train_loss:.6f}, va: {valid_loss:.6f}, train_mse:,{t_m:.6f} '
+                    f', val_mse:,{v_m:.6f}')
 
-        return {"loss": train_loss, "val_loss": valid_loss, "mo": metric_output, "log": log}
+        return {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m,
+                "log": log}
 
     def configure_optimizers(self):
         from torch.optim import Adam
@@ -385,7 +379,7 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   lr=1e-4,
                                   asset_list='../data/asset_list.txt',
                                   etf_list='../data/etf_list.txt',
-                                  coor_fn='../data/stock_positive_most_relevent.parquet',
+                                  coor_fn='../data/stock_positive_most_relevent_nms.parquet',
                                   front_padding_num=3,
                                   train_start_date="2012-01-01",
                                   valid_start_date="2016-01-01",
@@ -404,7 +398,7 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         accumulate_grad_batches=accumulate_grad_batches,
         checkpoint_callback=ModelCheckpoint(
             filepath=os.path.join("lightning_logs", '{epoch}-{val_loss:.3f}'),
-            monitor='val_loss',
+            monitor='val_mse',
             verbose=1
         ),
 
@@ -417,7 +411,6 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
     )
 
     LoggerUtil.setup_all('lightning_logs/train_log.txt')
-
     trainer.fit(model)
     # TimeSeriesTransformer.load_from_checkpoint()
 

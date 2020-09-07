@@ -143,9 +143,11 @@ class MyIterableDataset(IterableDataset):
 
         # preprocess data
         etfs = etf_npz["input"].copy()
-        etfs[..., 4] = np.log(etfs[..., 4] + 1)
+        # etfs[..., 4] = np.log(etfs[..., 4] + 1)
+        etfs = np.log(etfs + 1)
         feature = stock_npz["input"].copy()
-        feature[..., 4] = np.log(feature[..., 4] + 1)
+        # feature[..., 4] = np.log(feature[..., 4] + 1)
+        feature = np.log(feature + 1)
 
         self.seq_len = feature.shape[1]
         self.xrds_autojoin_padding_start = self.seq_len * 10
@@ -162,8 +164,12 @@ class MyIterableDataset(IterableDataset):
                                     merge_out=False)
 
         self.anchor_ds = xr.merge(stock_das + etf_das)
+        x = stock_npz["input"][..., 3]
+        y = stock_npz['target']
+        y = y / x - 1
+        y[np.isnan(y)] = -100
 
-        label = self.create_xrds2(stock_npz['target'], stock_npz['stock_name'], stock_repad)
+        label = self.create_xrds2(y, stock_npz['stock_name'], stock_repad)
         self.label = label
 
     def pad_stock_id(self, stock_id):
