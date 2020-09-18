@@ -14,6 +14,10 @@ class Loss_functions():
         return ln_sigma + (((target + eps).log() - mu) / ln_sigma.exp()) ** 2 / 2
 
     @staticmethod
+    def nll_norm(mu, ln_sigma, target, eps=1e-6):
+        return ln_sigma + (((target + eps) - mu) / ln_sigma.exp()) ** 2 / 2
+
+    @staticmethod
     def mlabe(pred, target, eps=1e-6):
         return torch.log(((pred - target) / (target + eps)).abs() + 1)
 

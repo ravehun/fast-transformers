@@ -1,8 +1,6 @@
-import os
 import warnings
 
 import click
-from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.nn import Parameter
 from transformers import GPT2Config, GPT2Model
 
@@ -48,8 +46,30 @@ class TimeSeriesTransformer(pl.LightningModule):
                  front_padding_num=2,
                  train_start_date=None,
                  valid_start_date=None,
+                 distribution="t",
+                 limits=None,
                  **kwargs):
         super(TimeSeriesTransformer, self).__init__()
+
+        if distribution == 'normal':
+            model_output_projection_dim = 2
+            self.output_header = lambda mu, ln_sigma: {
+                "mu": mu,
+                'ln_sigma': ln_sigma,
+            }
+            self.loss = SeqGroupMetric(Loss_functions.nll_norm, "nll_norm")
+            self.metric_adapter = lambda mu, ln_sigma: mu
+
+        elif distribution == 't':
+            model_output_projection_dim = 3
+            self.output_header = lambda ln_df, loc, ln_scale: {
+                "df": ln_df.exp().squeeze(-1),
+                "loc": loc.squeeze(-1),
+                "scale": ln_scale.exp().squeeze(-1),
+            }
+            self.metric_adapter = lambda df, loc, scale: loc.squeeze(-1)
+            self.loss = NLLtPdf()
+        self.limits = limits
         self.market_fn = market_fn
         self.valid_start_date = valid_start_date
         temporal_project_dimension = temporal_query_dimensions * temporal_n_heads
@@ -60,11 +80,10 @@ class TimeSeriesTransformer(pl.LightningModule):
         # self.spatial_input_projection = nn.Linear(stock_input_dimensions, spatial_project_dimension)
         self.seq_len = seq_len
         self.pad_seq_len = seq_len + front_padding_num
-        self.loss = NLLtPdf()
         self.file_re = stock_fn
         self.batch_size = batch_size
         self.metric_object = SeqGroupMetric(Loss_functions.dist1, "mse")
-        self.output_projection = nn.Linear(temporal_n_heads * temporal_value_dimensions, 3)
+        self.output_projection = nn.Linear(temporal_n_heads * temporal_value_dimensions, model_output_projection_dim)
         if type(stock_fn) != dict:
             self.filenames = glob.glob(stock_fn)
         self.lr = lr
@@ -206,13 +225,8 @@ class TimeSeriesTransformer(pl.LightningModule):
                                       attention_mask=seq_mask,
                                       position_ids=relative_days_off,
                                       **transformer_kwargs)
-        ln_df, loc, ln_scale = self.output_projection(regress_embeddings).split(1, -1)
-        # print(f"relative_days_off {relative_days_off} {relative_days_off[0, :10]}")
-        return {
-            "df": ln_df.exp().squeeze(-1),
-            "loc": loc.squeeze(-1),
-            "scale": ln_scale.exp().squeeze(-1),
-        }
+        outputs = self.output_projection(regress_embeddings).split(1, -1)
+        return self.output_header(*outputs)
 
     # def pred_with_attention(self,
     #                         group,
@@ -269,7 +283,7 @@ class TimeSeriesTransformer(pl.LightningModule):
         with torch.no_grad():
             metric_output = self.metric_object(
                 outputs={
-                    "pred": model_output["loc"]
+                    "pred": self.metric_adapter(**model_output),
                 },
                 target=target,
                 group=inputs["group"]
@@ -307,9 +321,10 @@ class TimeSeriesTransformer(pl.LightningModule):
         logger.info(f'step {self.global_step} epoch {self.current_epoch} '
                     f'tr: {train_loss:.6f}, va: {valid_loss:.6f}, train_mse:,{t_m:.6f} '
                     f', val_mse:,{v_m:.6f}')
+        bar = {"val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m}
 
         return {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m,
-                "log": log}
+                "log": log, 'progress_bar': bar, }
 
     def configure_optimizers(self):
         from torch.optim import Adam
@@ -329,6 +344,7 @@ class TimeSeriesTransformer(pl.LightningModule):
             , position_oov_size=self.position_oov_size
             , stock_id_header_token=self.stock_id_header_token
             , stock_price_start_token=self.stock_price_start_token
+            , limits=self.limits
         )
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers)
 
@@ -354,22 +370,23 @@ def init_weights(m):
 @click.option('--batch-size', type=int, default=1, show_default=True, help="batch size")
 @click.option('--attention-type', type=str, default='full', show_default=True, help="file regex")
 @click.option('--gpus', type=int, default=None, show_default=True, help="gpu num")
-@click.option('--accumulate_grad_batches', type=int, default=11, show_default=True, help="update with N batches")
+@click.option('--accumulate_grad_batches', type=int, default=1, show_default=True, help="update with N batches")
 @click.option('--auto_lr_find', type=bool, default=False, show_default=True, help="auto_lr_find")
 def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, auto_lr_find, market_fn):
     torch.cuda.empty_cache()
+    torch.manual_seed(8125911)
     model = TimeSeriesTransformer(stock_input_dimensions=5,
                                   stock_fn=file_re,
                                   market_fn=market_fn,
                                   # project_dimension=128,
                                   temporal_n_layers=2,
                                   temporal_n_heads=10,
-                                  temporal_query_dimensions=10,
-                                  temporal_value_dimensions=10,
+                                  temporal_query_dimensions=40,
+                                  temporal_value_dimensions=40,
                                   spatial_n_heads=8,
                                   spatial_n_layers=2,
-                                  spatial_query_dimensions=8,
-                                  spatial_value_dimensions=8,
+                                  spatial_query_dimensions=20,
+                                  spatial_value_dimensions=20,
                                   feed_forward_dimensions=100,
                                   attention_type=attention_type,
                                   num_workers=0,
@@ -383,9 +400,13 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   front_padding_num=3,
                                   train_start_date="2012-01-01",
                                   valid_start_date="2016-01-01",
+                                  # distribution='t',
+                                  distribution='normal',
+                                  limits=None,
                                   )
     init_weights(model)
     trainer = pl.Trainer(
+        progress_bar_refresh_rate=5,
         max_epochs=100,
         # limit_val_batches=1.0,
         # reload_dataloaders_every_epoch=True,
@@ -395,24 +416,25 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         auto_lr_find=auto_lr_find,
         # use_amp=False,
         gradient_clip_val=2.5,
-        accumulate_grad_batches=accumulate_grad_batches,
-        checkpoint_callback=ModelCheckpoint(
-            filepath=os.path.join("lightning_logs", '{epoch}-{val_loss:.3f}'),
-            monitor='val_mse',
-            verbose=1
-        ),
-
+        accumulate_grad_batches=256,
+        # accumulate_grad_batches=accumulate_grad_batches,
+        # resume_from_checkpoint='/content/fast-transformers/app/lightning_logs/epoch=0-val_loss=0.000.ckpt',
+        # checkpoint_callback=ModelCheckpoint(
+        #     filepath=os.path.join("lightning_logs", '{epoch}-{val_loss:.3f}'),
+        #     monitor='val_mse',
+        #     verbose=1
+        # ),
         # early_stop_callback=TrainEarlyStopping(patience=5),
         # weights_save_path='lightning_logs1',
         # resume_from_checkpoint='lightning_logs/version_8/checkpoints/epoch=2.ckpt'
         # precision=16,
         # tpu_cores=8,
-
     )
 
     LoggerUtil.setup_all('lightning_logs/train_log.txt')
     trainer.fit(model)
     # TimeSeriesTransformer.load_from_checkpoint()
+
 
 if __name__ == "__main__":
     train()

@@ -17,7 +17,7 @@ class MyIterableDataset(IterableDataset):
                  stock_mapping=None,
                  anchor_mapping=None,
                  front_padding_num=0,
-                 stock_id_header_token=1, stock_price_start_token=2,
+                 stock_id_header_token=1, stock_price_start_token=2, limits=None
                  ):
         self.fn = fn
         self.feature = None
@@ -32,10 +32,13 @@ class MyIterableDataset(IterableDataset):
         self.market_fn = market_fn
         self.coor_fn = coor_fn
         self.logger = LoggerUtil.get_logger("dataset")
+        self.limits = limits
+        self.eps = 1e-6
 
     @staticmethod
     def affine(x, inf, sup):
-        x = (x.max(axis=1, keepdims=True) - x) / (x.max(axis=1, keepdims=True) - x.min(axis=1, keepdims=True) + 1e-6)
+        x = (x.max(axis=1, keepdims=True) - x) / (
+                    x.max(axis=1, keepdims=True) - x.min(axis=1, keepdims=True) + self.eps)
         x = x * (sup - inf) + inf
         return x
 
@@ -47,9 +50,9 @@ class MyIterableDataset(IterableDataset):
         f = {
             "min_max": lambda: (x.max(axis=1, keepdims=True) - x) / (
                     x.max(axis=1, keepdims=True) - x.min(axis=1, keepdims=True)),
-            "z_score": lambda: (x - x.mean(axis=1, keepdims=True)) / (x.std(axis=1, keepdims=True) + 1e-6),
+            "z_score": lambda: (x - x.mean(axis=1, keepdims=True)) / (x.std(axis=1, keepdims=True) + self.eps),
             "affine": lambda: MyIterableDataset.affine(x, kwargs["inf"], kwargs["sup"]),
-            "log": lambda: (x + 1e-6).log(),
+            "log": lambda: (x + self.eps).log(),
         }
 
         return f[n_type]()
@@ -166,8 +169,7 @@ class MyIterableDataset(IterableDataset):
         self.anchor_ds = xr.merge(stock_das + etf_das)
         x = stock_npz["input"][..., 3]
         y = stock_npz['target']
-        y = y / x - 1
-        y[np.isnan(y)] = -100
+        y = np.log((y + self.eps) / (x + self.eps))
 
         label = self.create_xrds2(y, stock_npz['stock_name'], stock_repad)
         self.label = label
@@ -278,4 +280,6 @@ class MyIterableDataset(IterableDataset):
     def __len__(self):
         if not hasattr(self, 'anchor_ds'):
             self.load()
-        return len(self.stock_name)
+        if self.limits is None:
+            return len(self.stock_name)
+        return self.limits
