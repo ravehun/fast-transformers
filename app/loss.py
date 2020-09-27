@@ -1,6 +1,10 @@
 import numpy as np
 import torch
+from common_utils import ModifiedBesselKv, ModifiedBesselKve
 from pytorch_lightning.metrics import Metric
+
+besselK = ModifiedBesselKv.apply
+besselKe = ModifiedBesselKve.apply
 
 
 class Loss_functions():
@@ -36,6 +40,63 @@ class Loss_functions():
     @staticmethod
     def dist1(target, pred):
         return (target - pred).abs()
+
+    @staticmethod
+    def nll_dghb6(
+            target, mu, gamma, pc, chi, ld,
+    ):
+        '''
+
+        Parameters
+        ----------
+        target
+        mu  R
+        gamma R+
+        pc R+
+        chi R+
+        ld R
+
+        Returns
+        -------
+
+        '''
+        sigma = 1
+        gmc = gamma * sigma
+        q = (target - mu) / sigma
+        alpha = pc + gmc ** 2
+        chi_q = chi + q ** 2
+        xp_z = (chi_q * alpha).sqrt()
+
+        # print(f"bessel ratio {besselK(xp_z, ld - 0.5).log() - besselK((chi * pc) ** 0.5, ld).log()} {besselK(xp_z, ld - 0.5).log()} {besselK((chi * pc) ** 0.5, ld).log()} "
+        #       f"\n xp, z  {chi_q}, {alpha}"
+        #       f"\n front {-(0.5 * ld * (pc / chi).log() + (0.5 - ld) * alpha.log() - 0.5 * np.log(2 * np.pi) + (ld - 0.5) * xp_z.log() + q * gmc)}"
+        #       )
+        return -(0.5 * ld * (pc / chi).log() + (0.5 - ld) * alpha.log() - 0.5 * np.log(2 * np.pi) \
+                 + (ld - 0.5) * xp_z.log() + q * gmc \
+                 + besselK(xp_z, ld - 0.5).log() - besselK((chi * pc) ** 0.5, ld).log()
+                 )
+
+    @staticmethod
+    def nll_dghb(target,
+                 ld,
+                 alpha,
+                 beta,
+                 delta,
+                 mu, ):
+        gamma = (alpha ** 2 - beta ** 2).sqrt()
+        y = (delta ** 2 + (target - mu) ** 2).sqrt()
+        bx = beta * (target - mu)
+
+        besselRatio = (besselK(y * alpha, ld - 1 / 2) / besselK(delta * gamma, ld)).log()
+        st = ld * (gamma / delta).log()
+        ft = (ld - 0.5) * (y / alpha).log() - 0.5 * np.log((2 * np.pi)) + bx
+
+        return - (besselRatio + ft + st)
+
+    @staticmethod
+    def gh_ex(mu, gamma, pc, chi, ld):
+        chi_s = chi.sqrt()
+        return mu + (chi_s * gamma * besselK(chi_s * pc, ld + 1)) / (pc * besselK(chi_s * pc, ld))
 
 
 class MaskedMetric(Metric):

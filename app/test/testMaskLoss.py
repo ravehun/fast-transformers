@@ -2,6 +2,7 @@ import unittest
 
 import numpy as np
 import torch
+from common_utils import TestUtils
 from loss import Loss_functions
 
 
@@ -29,42 +30,42 @@ class MaskLoss(unittest.TestCase):
     def _almost_equals(self, x, y, eps=1e-3):
         res = all(abs(x - y) < eps)
         if not res:
-            print(f"expect {x}, actual {y}")
+            print(f"expect {x}\n, actual {y}")
         self.assertTrue(res)
 
-    # def test_MaskedAPE(self):
-    #     eps = 1e-4
-    #     from loss import MaskedAPE
-    #
-    #     metric = MaskedAPE()
-    #     mock1 = {
-    #         "outputs": {
-    #             "pred": torch.tensor([1, 1, 1]).reshape(1, 3),
-    #         },
-    #         "target": torch.tensor([1, 1, 1]).reshape(1, 3),
-    #         "mask": torch.tensor([1, 1, 1]).reshape(1, 3),
-    #     }
-    #
-    #     expected = torch.tensor([0])
-    #     self._almost_equals(expected, metric(**mock1))
+    def test_MaskedAPE(self):
+        eps = 1e-4
+        from loss import MaskedAPE
 
-    # mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
-    #
-    #          torch.tensor([1, 1, -100]).reshape(1, 3),
-    #          torch.tensor([1, 1, 0]).reshape(1, 3),
-    #          torch.tensor([1, 1, 1]).reshape(1, 3),
-    #          ]
-    # expected = torch.tensor([50])
-    # self._almost_equals(expected, metric(*mock1))
-    #
-    # mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
-    #
-    #          torch.tensor([1, 1, 1]).reshape(1, 3),
-    #          torch.tensor([1, 1, 0]).reshape(1, 3),
-    #          torch.tensor([1, 1, 0]).reshape(1, 3),
-    #          ]
-    # expected = torch.tensor([50])
-    # self._almost_equals(expected, metric(*mock1))
+        metric = MaskedAPE()
+        mock1 = {
+            "outputs": {
+                "pred": torch.tensor([1, 1, 1]).reshape(1, 3),
+            },
+            "target": torch.tensor([1, 1, 1]).reshape(1, 3),
+            "mask": torch.tensor([1, 1, 1]).reshape(1, 3),
+        }
+
+        expected = torch.tensor([0])
+        self._almost_equals(expected, metric(**mock1))
+
+        # mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
+        #
+        #          torch.tensor([1, 1, -100]).reshape(1, 3),
+        #          torch.tensor([1, 1, 0]).reshape(1, 3),
+        #          torch.tensor([1, 1, 1]).reshape(1, 3),
+        #          ]
+        # expected = torch.tensor([50])
+        # self._almost_equals(expected, metric(*mock1))
+        #
+        # mock1 = [torch.tensor([1, 2, 1]).reshape(1, 3),
+        #
+        #          torch.tensor([1, 1, 1]).reshape(1, 3),
+        #          torch.tensor([1, 1, 0]).reshape(1, 3),
+        #          torch.tensor([1, 1, 0]).reshape(1, 3),
+        #          ]
+        # expected = torch.tensor([50])
+        # self._almost_equals(expected, metric(*mock1))
 
     def test_APE(self):
         from loss import APE
@@ -82,51 +83,6 @@ class MaskLoss(unittest.TestCase):
             "valid_loss": torch.tensor([0]),
         }
         [self._almost_equals(e, a) for (e, a) in zip(expected.values(), metric(**mock1).values())]
-        #
-        # metric = APE()
-        # mock1 = {
-        #     "pred": torch.tensor([1, 1, 1, 2]).reshape(1, -1),
-        #     "target": torch.tensor([1, 1, 1, 1]).reshape(1, -1),
-        #     "group": torch.tensor([1, 2, 0, 1]).reshape((1, -1)),
-        # }
-        #
-        # expected = {
-        #     "train_loss": torch.tensor([50]),
-        #     "valid_loss": torch.tensor([0]),
-        # }
-        # [self._almost_equals(e, a) for (e, a) in zip(expected.values(), metric(**mock1).values())]
-
-    #     mock1 = [torch.tensor([1, 1, 1, 1, 0]).reshape(1, -1),
-    #              torch.tensor([1, 1, 1, 2, 0]).reshape(1, -1),
-    #              {
-    #                  "group": torch.tensor([1, 2, 0, 1, 2]).reshape((1, -1))
-    #              }
-    #              ]
-    #     expected = {
-    #         "train_loss": torch.tensor([25]),
-    #         "valid_loss": torch.tensor([0]),
-    #     }
-    #     # print(expected.values(), metric(*mock1).values())
-    #     [self._almost_equals(e, a) for (e, a) in zip(expected.values(), metric(*mock1).values())]
-    #
-    # def testLABE(self):
-    #     from loss import MaskedMLABE
-    #     metric = MaskedMLABE()
-    #     mock1 = [torch.tensor([1, 1, 1, 1, 0]).reshape(1, -1),
-    #              torch.tensor([1, 1, 1, 2, 0]).reshape(1, -1),
-    #              {
-    #                  "group": torch.tensor([1, 2, 0, 1, 2]).reshape((1, -1))
-    #              }
-    #              ]
-    #     expected = {
-    #         "train_loss": torch.tensor([25]),
-    #         "valid_loss": torch.tensor([0]),
-    #     }
-    #
-    #     print(metric(*mock1).values())
-    #     [self._almost_equals(e, a) for (e, a) in zip(expected.values(), metric(*mock1).values())]
-    #
-    #     print(metric)
 
     def testLogNorm(self):
         from loss import NegtiveLogNormLoss
@@ -150,6 +106,57 @@ class MaskLoss(unittest.TestCase):
         expect = (-torch.distributions.LogNormal(mock["mu"], mock["ln_sigma"].exp()).log_prob(mock["target"])) \
                  - (math.sqrt(2 * math.pi) * mock["target"]).log()
         self._almost_equals(metric.func(**mock), expect)
+
+    def test_dghb(self):
+        x = torch.tensor(1).float()
+        # x = torch.tensor(np.arange(-10, 10)).float()
+        y = torch.tensor([0.3759686,
+                          ])
+        theta = [0.6, 2.0, 1.0, 1.1, 0.1]
+        # theta = [torch.tensor(v) for v in theta]
+        theta = [torch.tensor(v).repeat([y.shape[0]]) for v in theta]
+        print(theta)
+        actual = Loss_functions.nll_dghb(x, *theta)
+        self._almost_equals(y, (-actual).exp())
+
+        theta = [100.6, 2.0, 1.0, 1.1, 0.1]
+        theta = [torch.tensor(v) for v in theta]
+        expected = torch.tensor([1.039213e-22])
+        actual = Loss_functions.nll_dghb(torch.tensor([200]), *theta)
+        self._almost_equals(expected, (-actual).exp())
+
+        theta = [10.6, 2.0, 1.0, 1.0, 0.1]
+        theta = [torch.tensor(v) for v in theta]
+        expected = torch.tensor([0.0008125254])
+        actual = Loss_functions.nll_dghb(torch.tensor([20]), *theta)
+        TestUtils.almost_equals(expected, (-actual).exp())
+
+        times = 5000
+        theta = [200.6, 2.0, 1.0, 1.1, 8]
+        theta = [torch.tensor(v).repeat(times) for v in theta]
+
+        Loss_functions.nll_dghb(torch.tensor([400]).repeat(times), *theta)
+
+    def test_dghb6(self):
+        theta = [0.10,
+                 1.00,
+                 3.00,
+                 1.21,
+                 1.60, ]
+        theta = [torch.tensor(v) for v in theta]
+        expected = torch.tensor([0.3178799])
+        actual = Loss_functions.nll_dghb6(torch.tensor([1]), *theta)
+        TestUtils.almost_equals(expected, (-actual).exp(), 1e-6)
+
+        theta = [1.6,
+                 1.00,
+                 3.00,
+                 1.0,
+                 1.60, ]
+        theta = [torch.tensor(v) for v in theta]
+        expected = torch.tensor([0.09683605])
+        actual = Loss_functions.nll_dghb6(torch.tensor([1]), *theta)
+        TestUtils.almost_equals(expected, (-actual).exp(), 1e-6)
 
 
 if __name__ == '__main__':

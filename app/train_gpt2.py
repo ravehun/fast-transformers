@@ -22,6 +22,51 @@ from dataset import *
 logger = LoggerUtil.get_logger("train")
 
 class TimeSeriesTransformer(pl.LightningModule):
+
+    def _setup_by_dist(self, distribution):
+        if distribution == 'normal':
+            self.model_output_projection_dim = 2
+            self.output_header = lambda mu, ln_sigma: {
+                "mu": mu,
+                'ln_sigma': ln_sigma,
+            }
+            self.loss = SeqGroupMetric(Loss_functions.nll_norm, "nll_norm")
+            self.metric_adapter = lambda mu, ln_sigma: mu
+
+        elif distribution == 't':
+            self.model_output_projection_dim = 3
+            self.output_header = lambda ln_df, loc, ln_scale: {
+                "df": ln_df.exp().squeeze(-1),
+                "loc": loc.squeeze(-1),
+                "scale": ln_scale.exp().squeeze(-1),
+            }
+            self.metric_adapter = lambda df, loc, scale: loc.squeeze(-1)
+            self.loss = NLLtPdf()
+
+        elif distribution == 'gh_partial':
+            '''
+             target
+            mu  R
+            gamma R+
+            pc R+
+            chi R+
+            ld R
+            '''
+            self.model_output_projection_dim = 4
+            ld = 0.5
+            self.output_header = lambda mu, ln_gamma, ln_pc, ln_chi: {
+                'mu': mu.squeeze(-1),
+                'gamma': ln_gamma.exp().squeeze(-1),
+                'pc': ln_pc.exp().squeeze(-1),
+                'chi': ln_chi.exp().squeeze(-1),
+                'ld': torch.zeros_like(ln_chi).squeeze(-1) + ld
+            }
+            self.metric_adapter = Loss_functions.gh_ex
+            self.loss = SeqGroupMetric(Loss_functions.nll_dghb6, "nll_gh_partial")
+
+        else:
+            raise ValueError(f'no such distribution {distribution}')
+
     def __init__(self,
                  stock_fn,
                  market_fn,
@@ -51,24 +96,8 @@ class TimeSeriesTransformer(pl.LightningModule):
                  **kwargs):
         super(TimeSeriesTransformer, self).__init__()
 
-        if distribution == 'normal':
-            model_output_projection_dim = 2
-            self.output_header = lambda mu, ln_sigma: {
-                "mu": mu,
-                'ln_sigma': ln_sigma,
-            }
-            self.loss = SeqGroupMetric(Loss_functions.nll_norm, "nll_norm")
-            self.metric_adapter = lambda mu, ln_sigma: mu
+        self._setup_by_dist(distribution)
 
-        elif distribution == 't':
-            model_output_projection_dim = 3
-            self.output_header = lambda ln_df, loc, ln_scale: {
-                "df": ln_df.exp().squeeze(-1),
-                "loc": loc.squeeze(-1),
-                "scale": ln_scale.exp().squeeze(-1),
-            }
-            self.metric_adapter = lambda df, loc, scale: loc.squeeze(-1)
-            self.loss = NLLtPdf()
         self.limits = limits
         self.market_fn = market_fn
         self.valid_start_date = valid_start_date
@@ -83,7 +112,8 @@ class TimeSeriesTransformer(pl.LightningModule):
         self.file_re = stock_fn
         self.batch_size = batch_size
         self.metric_object = SeqGroupMetric(Loss_functions.dist1, "mse")
-        self.output_projection = nn.Linear(temporal_n_heads * temporal_value_dimensions, model_output_projection_dim)
+        self.output_projection = nn.Linear(temporal_n_heads * temporal_value_dimensions,
+                                           self.model_output_projection_dim)
         if type(stock_fn) != dict:
             self.filenames = glob.glob(stock_fn)
         self.lr = lr
@@ -228,51 +258,6 @@ class TimeSeriesTransformer(pl.LightningModule):
         outputs = self.output_projection(regress_embeddings).split(1, -1)
         return self.output_header(*outputs)
 
-    # def pred_with_attention(self,
-    #                         group,
-    #                         header_tokens,
-    #                         days_off,
-    #                         anchor_feature,
-    #                         stock_feature,
-    #                         anchor_ids,
-    #                         **transformer_kwargs):
-    #     with torch.no_grad():
-    #         seq_mask = (stock_feature[..., 0] > 0.1)
-    #         stock_id = header_tokens[0, 1]
-    #
-    #         spatial_embeddings = torch.einsum("nli,id->lnd", anchor_feature[0], self.weight[stock_id]) \
-    #                              + self.bias[stock_id][None, None, :]
-    #
-    #         # logger.debug(f"anchor_ids {anchor_ids.repeat(self.pad_seq_len, 1).shape}"
-    #         #              f"spatial_embeddings {spatial_embeddings.shape}")
-    #         anchor, _ = self.spatial_transformer(
-    #             inputs_embeds=spatial_embeddings,
-    #             position_ids=anchor_ids.repeat(self.seq_len, 1)
-    #         )
-    #         anchor = anchor.sum(1)[None, :, :]
-    #         anchor = self.spatial2temporal_projection(anchor)
-    #
-    #         x = self.temporal_input_projection(stock_feature) + anchor
-    #         # x = self.temporal_input_projection(stock_feature)
-    #
-    #         x, seq_mask, relative_days_off = self.attach_temporal_head(x, days_off, seq_mask, header_tokens)
-    #
-    #         regress_embeddings, cache, attention = \
-    #             self.temporal_transformer(inputs_embeds=x,
-    #                                       attention_mask=seq_mask,
-    #                                       position_ids=relative_days_off,
-    #                                       output_attentions=True,
-    #                                       **transformer_kwargs)
-    #
-    #         mu, sigma = self.output_projection(regress_embeddings).split(1, -1)
-    #     return {
-    #         "mu": mu.squeeze(-1),
-    #         "ln_sigma": sigma.squeeze(-1),
-    #         "cache": cache,
-    #         "attention": attention,
-    #         "regress_embeddings": regress_embeddings,
-    #     }
-
     def reset(self):
         pass
 
@@ -381,12 +366,12 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   # project_dimension=128,
                                   temporal_n_layers=2,
                                   temporal_n_heads=10,
-                                  temporal_query_dimensions=40,
-                                  temporal_value_dimensions=40,
+                                  temporal_query_dimensions=10,
+                                  temporal_value_dimensions=10,
                                   spatial_n_heads=8,
                                   spatial_n_layers=2,
-                                  spatial_query_dimensions=20,
-                                  spatial_value_dimensions=20,
+                                  spatial_query_dimensions=10,
+                                  spatial_value_dimensions=10,
                                   feed_forward_dimensions=100,
                                   attention_type=attention_type,
                                   num_workers=0,
@@ -401,8 +386,8 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   train_start_date="2012-01-01",
                                   valid_start_date="2016-01-01",
                                   # distribution='t',
-                                  distribution='normal',
-                                  limits=None,
+                                  distribution='gh_partial',
+                                  limits=1,
                                   )
     init_weights(model)
     trainer = pl.Trainer(
@@ -416,8 +401,9 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         auto_lr_find=auto_lr_find,
         # use_amp=False,
         gradient_clip_val=2.5,
-        accumulate_grad_batches=256,
+        accumulate_grad_batches=accumulate_grad_batches,
         # accumulate_grad_batches=accumulate_grad_batches,
+        checkpoint_callback=False
         # resume_from_checkpoint='/content/fast-transformers/app/lightning_logs/epoch=0-val_loss=0.000.ckpt',
         # checkpoint_callback=ModelCheckpoint(
         #     filepath=os.path.join("lightning_logs", '{epoch}-{val_loss:.3f}'),

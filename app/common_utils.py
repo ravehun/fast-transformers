@@ -4,6 +4,8 @@ from datetime import timedelta, datetime
 
 import numpy as np
 import pandas as pd
+import scipy.special
+import torch
 from scipy.stats import t, norm
 
 
@@ -125,3 +127,50 @@ class CudaMemUtil():
         print("Used memory:", info.used)
 
         nvidia_smi.nvmlShutdown()
+
+
+class TestUtils:
+    @staticmethod
+    def almost_equals(expected, actual, eps=1e-3):
+        r = abs(actual / expected - 1)
+        res = all(r < eps) and all(r >= 0)
+        if not res:
+            print(f"expect {expected}\n, actual {actual}")
+
+        assert res
+
+
+# note, we do not differentiate w.r.t. nu
+class ModifiedBesselKv(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, inp, nu):
+        ctx._nu = nu
+        ctx.save_for_backward(inp)
+        kv = scipy.special.kv(nu.detach().numpy(), inp.detach().numpy())
+        return torch.from_numpy(np.array(kv))
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        inp, = ctx.saved_tensors
+        nu = ctx._nu
+        return - 0.5 * grad_out * (ModifiedBesselKv.apply(inp, nu - 1.0) + ModifiedBesselKv.apply(inp, nu + 1.0)), None
+
+
+class ModifiedBesselKve(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, nu):
+        ctx._nu = nu
+        ctx.save_for_backward(x)
+        kv = scipy.special.kve(nu.detach().numpy(), x.detach().numpy())
+        ctx._kve = torch.from_numpy(np.array(kv))
+        return ctx._kve
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        inp, = ctx.saved_tensors
+        nu = ctx._nu
+        kve = ctx._kve
+        r = (kve +
+             inp.exp() * torch.from_numpy(scipy.special.kvp(nu.detach().numpy(), inp.detach().numpy()))
+             )
+        return grad_out * r, None
