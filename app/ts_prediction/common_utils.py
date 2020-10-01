@@ -27,6 +27,11 @@ class CommonUtils():
     def unstack(x):
         return [x[i] for i in range(x.shape[0])]
 
+    @staticmethod
+    def shape_check(x, dim):
+        if len(x.shape) != dim:
+            raise ValueError(f"expect {dim}, actual {len(x.shape)})")
+
 
 class DistUtil():
     @staticmethod
@@ -144,16 +149,26 @@ class TestUtils:
 class ModifiedBesselKv(torch.autograd.Function):
     @staticmethod
     def forward(ctx, inp, nu):
-        ctx._nu = nu
-        ctx.save_for_backward(inp)
-        kv = scipy.special.kv(nu.detach().numpy(), inp.detach().numpy())
-        return torch.from_numpy(np.array(kv))
+        # ctx._nu = nu
+        nu = nu.detach().cpu()
+        inp = inp.detach().cpu()
+        ctx.save_for_backward(inp, nu)
+        kv = scipy.special.kv(nu.numpy(), inp.numpy())
+        ret = torch.from_numpy(np.array(kv))
+        if inp.is_cuda:
+            ret = ret.cuda()
+        return ret
 
     @staticmethod
     def backward(ctx, grad_out):
-        inp, = ctx.saved_tensors
-        nu = ctx._nu
-        return - 0.5 * grad_out * (ModifiedBesselKv.apply(inp, nu - 1.0) + ModifiedBesselKv.apply(inp, nu + 1.0)), None
+        from ts_prediction.math_util import d_kv_2_order
+        inp, nu = ctx.saved_tensors
+        df_2_order = d_kv_2_order(nu.numpy(), inp.numpy())
+        df_2_order = torch.from_numpy(df_2_order)
+        if grad_out.is_cuda:
+            df_2_order = df_2_order.cuda()
+        return - 0.5 * grad_out * (ModifiedBesselKv.apply(inp, nu - 1.0) + ModifiedBesselKv.apply(inp, nu + 1.0)) \
+            , grad_out * df_2_order
 
 
 class ModifiedBesselKve(torch.autograd.Function):
@@ -161,7 +176,7 @@ class ModifiedBesselKve(torch.autograd.Function):
     def forward(ctx, x, nu):
         ctx._nu = nu
         ctx.save_for_backward(x)
-        kv = scipy.special.kve(nu.detach().numpy(), x.detach().numpy())
+        kv = scipy.special.kve(nu.detach().cpu().numpy(), x.detach().cpu().numpy())
         ctx._kve = torch.from_numpy(np.array(kv))
         return ctx._kve
 

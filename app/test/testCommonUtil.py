@@ -1,9 +1,11 @@
+import sys
 import unittest
+
+sys.path.append("..")
 
 import numpy as np
 import torch
-from common_utils import Mapping
-from common_utils import TestUtils
+from ts_prediction.common_utils import Mapping, TestUtils, ModifiedBesselKv, ModifiedBesselKve
 
 
 class TestCommonUtils(unittest.TestCase):
@@ -21,7 +23,6 @@ class TestCommonUtils(unittest.TestCase):
         assert (x.shape == torch.Size([1, 4, 3]))
 
     def test_ModifiedBesselKv(self):
-        from common_utils import ModifiedBesselKv
         modified_bessel = ModifiedBesselKv.apply
         x = torch.randn(5, requires_grad=True, dtype=torch.float64).exp()
         v = torch.zeros_like(x)
@@ -41,7 +42,7 @@ class TestCommonUtils(unittest.TestCase):
         TestUtils.almost_equals(expected, actual, 1e-6)
 
     def test_ModifiedBesselKve(self):
-        from common_utils import ModifiedBesselKve
+        # from common_utils import ModifiedBesselKve
         modified_bessel = ModifiedBesselKve.apply
         x = torch.randn(5, requires_grad=True, dtype=torch.float64).exp()
         v = torch.zeros_like(x)

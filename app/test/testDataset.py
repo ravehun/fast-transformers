@@ -1,7 +1,9 @@
+import sys
 import unittest
 
 import numpy as np
 
+sys.path.append("..")
 
 class MyTestCase(unittest.TestCase):
 

@@ -1,9 +1,12 @@
+import sys
 import unittest
+
+sys.path.append("..")
 
 import numpy as np
 import torch
-from common_utils import TestUtils
-from loss import Loss_functions
+from ts_prediction.common_utils import TestUtils
+from ts_prediction.math_util import Loss_functions
 
 
 class MaskLoss(unittest.TestCase):
@@ -35,7 +38,7 @@ class MaskLoss(unittest.TestCase):
 
     def test_MaskedAPE(self):
         eps = 1e-4
-        from loss import MaskedAPE
+        from ts_prediction.loss import MaskedAPE
 
         metric = MaskedAPE()
         mock1 = {
@@ -68,7 +71,7 @@ class MaskLoss(unittest.TestCase):
         # self._almost_equals(expected, metric(*mock1))
 
     def test_APE(self):
-        from loss import APE
+        from ts_prediction.loss import APE
         metric = APE()
         mock1 = {
             "outputs": {
@@ -85,7 +88,7 @@ class MaskLoss(unittest.TestCase):
         [self._almost_equals(e, a) for (e, a) in zip(expected.values(), metric(**mock1).values())]
 
     def testLogNorm(self):
-        from loss import NegtiveLogNormLoss
+        from ts_prediction.loss import NegtiveLogNormLoss
         metric = NegtiveLogNormLoss()
         mock = {
             "mu": torch.tensor([1.]),

@@ -14,12 +14,14 @@ import torch
 import pytorch_lightning as pl
 import torch.nn as nn
 
-from common_utils import *
+from ts_prediction.common_utils import *
+from ts_prediction.math_util import *
 
-from loss import *
-from dataset import *
+from ts_prediction.loss import *
+from ts_prediction.dataset import *
 
 logger = LoggerUtil.get_logger("train")
+
 
 class TimeSeriesTransformer(pl.LightningModule):
 
@@ -52,17 +54,16 @@ class TimeSeriesTransformer(pl.LightningModule):
             chi R+
             ld R
             '''
-            self.model_output_projection_dim = 4
-            ld = 0.5
-            self.output_header = lambda mu, ln_gamma, ln_pc, ln_chi: {
+            self.model_output_projection_dim = 5
+            self.output_header = lambda mu, ln_gamma, ln_pc, ln_chi, ld: {
                 'mu': mu.squeeze(-1),
                 'gamma': ln_gamma.exp().squeeze(-1),
                 'pc': ln_pc.exp().squeeze(-1),
                 'chi': ln_chi.exp().squeeze(-1),
-                'ld': torch.zeros_like(ln_chi).squeeze(-1) + ld
+                'ld': ld.squeeze(-1)
             }
             self.metric_adapter = Loss_functions.gh_ex
-            self.loss = SeqGroupMetric(Loss_functions.nll_dghb6, "nll_gh_partial")
+            self.loss = SeqGroupMetric(Loss_functions.nll_dghb6, "nll_gh")
 
         else:
             raise ValueError(f'no such distribution {distribution}')
@@ -273,11 +274,16 @@ class TimeSeriesTransformer(pl.LightningModule):
                 target=target,
                 group=inputs["group"]
             )
+
         log = {
-            "train_loss": loss_output["train_loss"]
-            , "valid_loss": loss_output["valid_loss"]
-            , "train_mse": metric_output["train_loss"]
-            , "val_mse": metric_output["valid_loss"]
+            "train_loss": loss_output["train_loss"],
+            "valid_loss": loss_output["valid_loss"],
+            "train_mse": metric_output["train_loss"],
+            "val_mse": metric_output["valid_loss"],
+            'mu': model_output['mu'].mean(),
+            'gamma': model_output['gamma'].mean(),
+            'pc': model_output['pc'].mean(),
+            'chi': model_output['chi'].mean(),
         }
 
         ret = {
@@ -285,6 +291,11 @@ class TimeSeriesTransformer(pl.LightningModule):
             "valid_loss": loss_output["valid_loss"],
             "train_mse": metric_output["train_loss"],
             "val_mse": metric_output["valid_loss"],
+            'mu': model_output['mu'].mean(),
+            'gamma': model_output['gamma'].mean(),
+            'pc': model_output['pc'].mean(),
+            'chi': model_output['chi'].mean(),
+
             "log": log,
         }
 
@@ -298,15 +309,30 @@ class TimeSeriesTransformer(pl.LightningModule):
             return torch.stack([x[key] for x in outputs]).mean()
 
         keys = ["loss", "valid_loss",
-                "train_mse", 'val_mse'
+                "train_mse", 'val_mse',
+
+                'mu',
+                'gamma',
+                'pc',
+                'chi',
                 ]
         res = [_agg_by_key(key) for key in keys]
-        train_loss, valid_loss, t_m, v_m = res
+        train_loss, valid_loss, t_m, v_m = res[:4]
+        (mu,
+         gamma,
+         pc,
+         chi) = res[4:]
+
         log = {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m}
         logger.info(f'step {self.global_step} epoch {self.current_epoch} '
                     f'tr: {train_loss:.6f}, va: {valid_loss:.6f}, train_mse:,{t_m:.6f} '
                     f', val_mse:,{v_m:.6f}')
-        bar = {"val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m}
+        bar = {"val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m,
+               'mu': mu,
+               'gamma': gamma,
+               'pc': pc,
+               'chi': chi,
+               }
 
         return {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m,
                 "log": log, 'progress_bar': bar, }

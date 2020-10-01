@@ -7,7 +7,8 @@ import click
 import numpy as np
 import pandas as pd
 import tqdm
-from common_utils import CommonUtils
+
+from .common_utils import CommonUtils
 
 _ROOT = os.path.abspath(os.path.dirname(__file__))
 TF_RECORDS = _ROOT + "/../data/stocks_seq"
