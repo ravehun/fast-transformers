@@ -19,6 +19,7 @@ py::array_t<double> hypergeometric_pfq(
         py::array_t<double> avi
         , py::array_t<double> bvi
         , py::array_t<double> zi
+        , long precision
         ) {
 
     flint_rand_t state;
@@ -26,7 +27,7 @@ py::array_t<double> hypergeometric_pfq(
     flint_randinit(state);
 
     slong prec;
-    prec = 53;
+    prec = (slong)precision;
 
     arb_ptr av, bv;
 

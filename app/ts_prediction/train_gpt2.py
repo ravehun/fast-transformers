@@ -45,6 +45,26 @@ class TimeSeriesTransformer(pl.LightningModule):
             self.metric_adapter = lambda df, loc, scale: loc.squeeze(-1)
             self.loss = NLLtPdf()
 
+        elif distribution == 'gh':
+            '''
+             target
+            mu  R
+            gamma R+
+            pc R+
+            chi R+
+            ld R
+            '''
+            self.model_output_projection_dim = 5
+            self.output_header = lambda mu, gamma, ln_pc, ln_chi, ld: {
+                'mu': mu.squeeze(-1),
+                'gamma': gamma.squeeze(-1),
+                'pc': ln_pc.exp().squeeze(-1),
+                'chi': ln_chi.exp().squeeze(-1),
+                'ld': ld.squeeze(-1)
+            }
+            self.metric_adapter = Loss_functions.gh_ex
+            self.loss = SeqGroupMetric(Loss_functions.nll_dghb6, "nll_gh")
+
         elif distribution == 'gh_partial':
             '''
              target
@@ -55,9 +75,9 @@ class TimeSeriesTransformer(pl.LightningModule):
             ld R
             '''
             self.model_output_projection_dim = 5
-            self.output_header = lambda mu, ln_gamma, ln_pc, ln_chi, ld: {
+            self.output_header = lambda mu, gamma, ln_pc, ln_chi, ld: {
                 'mu': mu.squeeze(-1),
-                'gamma': ln_gamma.exp().squeeze(-1),
+                'gamma': gamma.squeeze(-1),
                 'pc': ln_pc.exp().squeeze(-1),
                 'chi': ln_chi.exp().squeeze(-1),
                 'ld': ld.squeeze(-1)
@@ -83,7 +103,7 @@ class TimeSeriesTransformer(pl.LightningModule):
                  spatial_value_dimensions=64,
                  num_workers=1,
                  batch_size=2,
-                 lr=1e-7,
+                 lr=1e-4,
                  seq_len=1000,
                  seed=100,
                  asset_list=None,
@@ -184,7 +204,7 @@ class TimeSeriesTransformer(pl.LightningModule):
 
         self.temporal_transformer = GPT2Model(config=temporal_gpt2_config)
         self.spatial_transformer = GPT2Model(config=spatial_gpt2_config)
-
+        self.__debug_ctx = {}
     @property
     def get_device(self):
         if torch.cuda.is_available():
@@ -275,15 +295,22 @@ class TimeSeriesTransformer(pl.LightningModule):
                 group=inputs["group"]
             )
 
+        def is_integer(x, eps=1e-8):
+            return (x - x.round()).abs() < eps
+
+        def is_integer(x, eps=1e-8):
+            return (x - x.round()).abs() < eps
+
         log = {
             "train_loss": loss_output["train_loss"],
             "valid_loss": loss_output["valid_loss"],
             "train_mse": metric_output["train_loss"],
             "val_mse": metric_output["valid_loss"],
-            'mu': model_output['mu'].mean(),
-            'gamma': model_output['gamma'].mean(),
-            'pc': model_output['pc'].mean(),
-            'chi': model_output['chi'].mean(),
+            'mu': model_output['mu'].abs().max(),
+            'gamma': model_output['gamma'].abs().max(),
+            'pc': model_output['pc'].abs().max(),
+            'chi': model_output['chi'].abs().max(),
+            'ld': is_integer(model_output['ld'] * 2).sum().float(),
         }
 
         ret = {
@@ -291,14 +318,21 @@ class TimeSeriesTransformer(pl.LightningModule):
             "valid_loss": loss_output["valid_loss"],
             "train_mse": metric_output["train_loss"],
             "val_mse": metric_output["valid_loss"],
-            'mu': model_output['mu'].mean(),
-            'gamma': model_output['gamma'].mean(),
-            'pc': model_output['pc'].mean(),
-            'chi': model_output['chi'].mean(),
-
+            'mu': log['mu'],
+            'gamma': log['gamma'],
+            'pc': log['pc'],
+            'chi': log['chi'],
+            'ld': log['ld'],
             "log": log,
         }
 
+        for v in model_output.values():
+            v.retain_grad()
+
+        self.__debug_ctx.update(
+            target=target,
+            **model_output
+        )
         return ret
 
     def training_epoch_end(
@@ -315,13 +349,15 @@ class TimeSeriesTransformer(pl.LightningModule):
                 'gamma',
                 'pc',
                 'chi',
+                'ld'
                 ]
         res = [_agg_by_key(key) for key in keys]
         train_loss, valid_loss, t_m, v_m = res[:4]
         (mu,
          gamma,
          pc,
-         chi) = res[4:]
+         chi,
+         ld) = res[4:]
 
         log = {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m}
         logger.info(f'step {self.global_step} epoch {self.current_epoch} '
@@ -332,10 +368,43 @@ class TimeSeriesTransformer(pl.LightningModule):
                'gamma': gamma,
                'pc': pc,
                'chi': chi,
+               'ld': ld
                }
 
         return {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m,
                 "log": log, 'progress_bar': bar, }
+
+    def backward(self, trainer, loss, optimizer, optimizer_idx: int):
+
+        # trainer.model.zero_grad()
+        # optimizer.zero_grad()
+
+        # def where_nan(metric):
+        #     return torch.isnan(metric) | torch.isinf(metric)
+        #
+        # nans = where_nan(loss.grad)
+        # print(nans.sum())
+        loss.backward()
+        grads = dict((k, v.grad) for k, v in self.__debug_ctx.items())
+
+        def print_first(x):
+            for k, v in x.items():
+                print(f"{k}: {v}")
+                # print(f"{k}: {v.reshape(-1).max()}")
+
+        # print_first(grads)
+        nan_indice = torch.isnan(grads['ld'])
+        print(f'invalid indices: {torch.where(nan_indice)}')
+
+        nan_value = dict((k, v[nan_indice]) for k, v in self.__debug_ctx.items())
+
+        print_first(nan_value)
+
+        # np.savez(
+        #     '/tmp/debug.npz',
+        #     **grads
+        # )
+        # exit(0)
 
     def configure_optimizers(self):
         from torch.optim import Adam
@@ -381,7 +450,7 @@ def init_weights(m):
 @click.option('--batch-size', type=int, default=1, show_default=True, help="batch size")
 @click.option('--attention-type', type=str, default='full', show_default=True, help="file regex")
 @click.option('--gpus', type=int, default=None, show_default=True, help="gpu num")
-@click.option('--accumulate_grad_batches', type=int, default=1, show_default=True, help="update with N batches")
+@click.option('--accumulate_grad_batches', type=int, default=10, show_default=True, help="update with N batches")
 @click.option('--auto_lr_find', type=bool, default=False, show_default=True, help="auto_lr_find")
 def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, auto_lr_find, market_fn):
     torch.cuda.empty_cache()
@@ -412,12 +481,13 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
                                   train_start_date="2012-01-01",
                                   valid_start_date="2016-01-01",
                                   # distribution='t',
-                                  distribution='gh_partial',
+                                  distribution='gh',
                                   limits=1,
                                   )
+
     init_weights(model)
     trainer = pl.Trainer(
-        progress_bar_refresh_rate=5,
+        # progress_bar_refresh_rate=5,
         max_epochs=100,
         # limit_val_batches=1.0,
         # reload_dataloaders_every_epoch=True,
@@ -426,10 +496,11 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         gpus=gpus,
         auto_lr_find=auto_lr_find,
         # use_amp=False,
-        gradient_clip_val=2.5,
+        gradient_clip_val=1,
         accumulate_grad_batches=accumulate_grad_batches,
         # accumulate_grad_batches=accumulate_grad_batches,
         checkpoint_callback=False
+
         # resume_from_checkpoint='/content/fast-transformers/app/lightning_logs/epoch=0-val_loss=0.000.ckpt',
         # checkpoint_callback=ModelCheckpoint(
         #     filepath=os.path.join("lightning_logs", '{epoch}-{val_loss:.3f}'),
@@ -441,6 +512,7 @@ def train(file_re, batch_size, attention_type, gpus, accumulate_grad_batches, au
         # resume_from_checkpoint='lightning_logs/version_8/checkpoints/epoch=2.ckpt'
         # precision=16,
         # tpu_cores=8,
+
     )
 
     LoggerUtil.setup_all('lightning_logs/train_log.txt')

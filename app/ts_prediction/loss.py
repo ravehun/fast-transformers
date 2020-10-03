@@ -26,6 +26,19 @@ class MaskedMetric(Metric):
 
         mask = mask.float()
         metric = self.func(target=target, **outputs)
+
+        # loss = metric.detach().numpy()
+        # tt = target.detach().numpy()
+        # oo = dict((k,v.detach().numpy()) for k,v in outputs.items())
+        # import numpy as np
+        # np.savez(
+        #     '/tmp/debug.npz',
+        #     loss=loss,
+        #     target=tt,
+        #     **oo
+        # )
+        # exit(0)
+
         if reduction:
             metric = (mask * metric).sum(dim=1) / (mask.sum(dim=1) + eps)
             metric = metric.mean()

@@ -5,4 +5,4 @@ apt-get install -y libgmp10
 apt-get install -y libflint-dev
 apt-get install gmpc* -y
 
-pip install pyarrow,xarray,cppimport
+pip install pyarrow xarray cppimport

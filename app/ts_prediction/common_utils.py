@@ -77,6 +77,8 @@ class LoggerUtil():
         handlers = []
         handlers.append(LoggerUtil.get_handler(None, logging.INFO))
         if fn is not None:
+            import os
+            os.makedirs(os.path.dirname(fn), exist_ok=True)
             handlers.append(LoggerUtil.get_handler(fn, logging.INFO))
 
         loggers_profiles = [
@@ -144,31 +146,48 @@ class TestUtils:
 
         assert res
 
+    @staticmethod
+    def less_than_expected(expected, actual, eps=1e-3):
+        r = expected - actual
+        res = all(r < eps) and all(r >= 0)
+        if not res:
+            print(f"expect {expected}\n, actual {actual}")
+
+        assert res
+
 
 # note, we do not differentiate w.r.t. nu
 class ModifiedBesselKv(torch.autograd.Function):
     @staticmethod
     def forward(ctx, inp, nu):
-        # ctx._nu = nu
+        is_cuda = inp.is_cuda
+        ctx.save_for_backward(inp, nu)
+
         nu = nu.detach().cpu()
         inp = inp.detach().cpu()
-        ctx.save_for_backward(inp, nu)
-        kv = scipy.special.kv(nu.numpy(), inp.numpy())
+        # ctx.save_for_backward(inp, nu)
+        kv = scipy.special.kv(nu.detach().cpu().numpy(), inp.detach().cpu().numpy())
         ret = torch.from_numpy(np.array(kv))
-        if inp.is_cuda:
+        if is_cuda:
             ret = ret.cuda()
         return ret
 
     @staticmethod
     def backward(ctx, grad_out):
-        from ts_prediction.math_util import d_kv_2_order
+        from ts_prediction.math_util import Loss_functions
         inp, nu = ctx.saved_tensors
-        df_2_order = d_kv_2_order(nu.numpy(), inp.numpy())
+
+        def to_1dnp(x):
+            return x.squeeze().detach().cpu().numpy()
+
+        df_2_order = Loss_functions.d_kv_2_order_plus(to_1dnp(inp), to_1dnp(nu))
+        df_2_order = df_2_order.reshape(grad_out.shape)
         df_2_order = torch.from_numpy(df_2_order)
         if grad_out.is_cuda:
             df_2_order = df_2_order.cuda()
         return - 0.5 * grad_out * (ModifiedBesselKv.apply(inp, nu - 1.0) + ModifiedBesselKv.apply(inp, nu + 1.0)) \
-            , grad_out * df_2_order
+            , df_2_order * grad_out
+        # df_2_order
 
 
 class ModifiedBesselKve(torch.autograd.Function):

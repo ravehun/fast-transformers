@@ -3,12 +3,13 @@ import torch
 from numpy import pi
 from scipy.special import iv
 
-from app.ts_prediction.common_utils import ModifiedBesselKv, ModifiedBesselKve
+from .common_utils import CommonUtils
+from .common_utils import ModifiedBesselKv, ModifiedBesselKve
 
 besselK = ModifiedBesselKv.apply
 besselKe = ModifiedBesselKve.apply
 
-from ts_prediction.libarb import hypergeometric_pfq
+from .libarb import hypergeometric_pfq
 
 from scipy.special import digamma, gamma
 
@@ -73,10 +74,6 @@ class Loss_functions():
         chi_q = chi + q ** 2
         xp_z = (chi_q * alpha).sqrt()
 
-        # print(f"bessel ratio {besselK(xp_z, ld - 0.5).log() - besselK((chi * pc) ** 0.5, ld).log()} {besselK(xp_z, ld - 0.5).log()} {besselK((chi * pc) ** 0.5, ld).log()} "
-        #       f"\n xp, z  {chi_q}, {alpha}"
-        #       f"\n front {-(0.5 * ld * (pc / chi).log() + (0.5 - ld) * alpha.log() - 0.5 * np.log(2 * np.pi) + (ld - 0.5) * xp_z.log() + q * gmc)}"
-        #       )
         return -(0.5 * ld * (pc / chi).log() + (0.5 - ld) * alpha.log() - 0.5 * np.log(2 * np.pi) \
                  + (ld - 0.5) * xp_z.log() + q * gmc \
                  + besselK(xp_z, ld - 0.5).log() - besselK((chi * pc) ** 0.5, ld).log()
@@ -106,29 +103,28 @@ class Loss_functions():
 
     @staticmethod
     def d_kv_2_order(z: np.ndarray, v: np.ndarray):
+        CommonUtils.shape_check(z, 1)
+        CommonUtils.shape_check(v, 1)
         N = z.shape[0]
 
         ivz = iv(v, z)
         imvz = iv(-v, z)
         z_square = np.square(z)
+
         t1 = 0.5 * pi / np.sin(pi * v)
         t2 = pi / np.tan(pi * v) * ivz
         t3 = ivz + imvz
         t14 = z_square / 4 / (1 - np.square(v))
 
-        # vfunc = np.vectorize(lambda v, z_square: hyper([1, 1, 1.5], [2, 2, 2 - v, 2 + v], z_square))
-        # t4 = vfunc(v, z_square)
+        # t4 = hyper([1, 1, 1.5], [2, 2, 2 - v, 2 + v], z_square)
         t4 = hypergeometric_pfq(np.array([[1, 1, 1.5]]).repeat(N, 0),
                                 np.stack([2 * np.ones_like(v), 2 * np.ones_like(v), 2 - v, 2 + v], 1),
                                 z_square
                                 )
-        # t4 = hyper([1, 1, 1.5], [2, 2, 2 - v, 2 + v], z_square)
-        t5 = np.log(0.5 * z) - digamma(v) - 0.5 * v
+        t5 = np.log(0.5 * z) - digamma(v) - 0.5 / v
         t6 = imvz
         t7 = np.square(gamma(-v))
         t8 = (0.5 * z) ** (2 * v)
-        # vfunc = np.vectorize(lambda v, z_square: hyp2f3(v, 0.5 + v, 1 + v, 1 + v, 1 + 2 * v, z_square))
-        # t9 = vfunc(v, z_square)
         # # t9 = hyp2f3(v, 0.5 + v, 1 + v, 1 + v, 1 + 2 * v, z_square)
         t9 = hypergeometric_pfq(
             np.stack([v, 0.5 + v], 1),
@@ -138,13 +134,32 @@ class Loss_functions():
         t10 = ivz
         t11 = np.square(gamma(v))
         t12 = (z / 2) ** (-2 * v)
-        # vfunc = np.vectorize(lambda v, z_square: hyp2f3(-v, 0.5 - v, 1 - v, 1 - v, 1 - 2 * v, z_square))
-        # t13 = vfunc(v, z_square)
         # t13 = hyp2f3(-v, 0.5 - v, 1 - v, 1 - v, 1 - 2 * v, z_square)
         t13 = hypergeometric_pfq(
             np.stack([-v, 0.5 - v, ], 1),
             np.stack([1 - v, 1 - v, 1 - 2 * v], 1),
             z_square
         )
-        return t1 * (t2 - t3 * (t14 * t4) + t5) \
+        # print("t4,t5,t7,t9,t11,t13",t4,t5,t7,t9,t11,t13)
+        # print("1,2,3",np.log(0.5 * z) , digamma(v) , 0.5 / v)
+        return t1 * (t2 - t3 * (t14 * t4 + t5)) \
                + 0.25 * (t6 * t7 * t8 * t9 - t10 * t11 * t12 * t13)
+
+    @staticmethod
+    def d_kv_2_order_plus(vs, zs):
+        CommonUtils.shape_check(zs, 1)
+        CommonUtils.shape_check(vs, 1)
+
+        def internal(v, z):
+            from mpmath import mpf
+            import mpmath as mp
+            z = mpf(float(z))
+            v = mpf(float(v))
+            t1 = \
+                mp.meijerg([[0.5], [1]], [[0, 0, v], [-v]], z ** 2, r=1) * mp.besselk(v, z) / mp.sqrt(mp.pi)
+            t2 = \
+                mp.meijerg([[], [0.5, 1]], [[0, 0, v, -v], []], z ** 2, r=1) * mp.besseli(v, z) * mp.sqrt(mp.pi)
+
+            return v / 2 * (t1 - t2)
+
+        return np.array([float(internal(vs[i], zs[i]).real) for i in range(vs.shape[0])])

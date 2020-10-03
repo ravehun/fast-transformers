@@ -5,7 +5,7 @@ warnings.filterwarnings("ignore")
 from torch.utils.data import IterableDataset
 import xarray as xr
 from .common_utils import *
-from loss import *
+from .loss import *
 import pandas as pd
 
 
