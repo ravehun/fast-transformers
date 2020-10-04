@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import scipy.special
 import torch
+from scipy.misc import derivative
+from scipy.special import kv, kvp
 from scipy.stats import t, norm
 
 
@@ -174,19 +176,32 @@ class ModifiedBesselKv(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_out):
-        from ts_prediction.math_util import Loss_functions
         inp, nu = ctx.saved_tensors
 
         def to_1dnp(x):
             return x.squeeze().detach().cpu().numpy()
 
-        df_2_order = Loss_functions.d_kv_2_order_plus(to_1dnp(inp), to_1dnp(nu))
-        df_2_order = df_2_order.reshape(grad_out.shape)
-        df_2_order = torch.from_numpy(df_2_order)
-        if grad_out.is_cuda:
-            df_2_order = df_2_order.cuda()
-        return - 0.5 * grad_out * (ModifiedBesselKv.apply(inp, nu - 1.0) + ModifiedBesselKv.apply(inp, nu + 1.0)) \
-            , df_2_order * grad_out
+        def to_tensor(x: np.ndarray, shape=grad_out.shape):
+            x = x.reshape(shape)
+            x = torch.tensor(x)
+            if grad_out.is_cuda:
+                x = x.cuda()
+            return x
+
+        def numeric_derivative(v, z):
+            return derivative(lambda _v: kv(_v, z), v, dx=1e-10)
+
+        z, v = to_1dnp(inp), to_1dnp(nu)
+        df_2_order = numeric_derivative(v, z)
+        to_tensor(df_2_order)
+        # df_2_order = df_2_order.reshape(grad_out.shape)
+        # df_2_order = torch.from_numpy(df_2_order)
+        # if grad_out.is_cuda:
+        #     df_2_order = df_2_order.cuda()
+
+        df_2_z = kvp(v, z)
+        return grad_out * to_tensor(df_2_z) \
+            , grad_out * to_tensor(df_2_order)
         # df_2_order
 
 

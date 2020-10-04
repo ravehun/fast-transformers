@@ -8,7 +8,7 @@ sys.path.append("..")
 from ts_prediction.math_util import *
 from mpmath import *
 
-mp.dps = 20;
+mp.dps = 20
 mp.pretty = True
 import numpy as np
 import scipy
@@ -22,10 +22,6 @@ class TestMathUtil(unittest.TestCase):
         # length = 1500
         # # for _ in range(10):
         # d_kv_2_order(np.array([2.1] * length), np.array([3.1] * length))
-
-    def test_d_kv_2_order_p(self):
-        length = 1500
-        z = Loss_functions.d_kv_2_order(np.array([2.0] * length), np.linspace(1.000001, 3.0000000000, length))
 
     def test_pfq(self):
         from ts_prediction.libarb import hypergeometric_pfq
@@ -61,25 +57,25 @@ class TestMathUtil(unittest.TestCase):
         expected = 2.40323872104276992090
         self.assertAlmostEqual(expected, actual)
 
-    def test_d_kv_2_order(self):
-        from ts_prediction.math_util import Loss_functions
-
-        from scipy.misc import derivative
-        def numeric_validation(z=3.1,
-                               v=2.1):
-            numeric_diff = derivative(lambda v: mp.besselk(v, z), v, dx=1e-5)
-            calculated = Loss_functions.d_kv_2_order(np.array([z]), np.array([v]))[0]
-            return mp.log(numeric_diff / calculated)
-
-        vs = -np.arange(100) + 0.01 + 50
-        z = 5.1
-
-        result = np.array([numeric_validation(z, v) for v in vs])
-        print(result)
-        eps = 1e-3
-        print(result[abs(result) > eps])
-        print((abs(result) > eps).sum())
-        assert all(abs(result) < eps)
+    # def test_d_kv_2_order(self):
+    #     from ts_prediction.math_util import Loss_functions
+    #
+    #     from scipy.misc import derivative
+    #     def numeric_validation(z=3.1,
+    #                            v=2.1):
+    #         numeric_diff = derivative(lambda v: mp.besselk(v, z), v, dx=1e-5)
+    #         calculated = Loss_functions.d_kv_2_order(np.array([z]), np.array([v]))[0]
+    #         return mp.log(numeric_diff / calculated)
+    #
+    #     vs = -np.arange(100) + 0.01 + 50
+    #     z = 5.1
+    #
+    #     result = np.array([numeric_validation(z, v) for v in vs])
+    #     print(result)
+    #     eps = 1e-3
+    #     print(result[abs(result) > eps])
+    #     print((abs(result) > eps).sum())
+    #     assert all(abs(result) < eps)
 
     def test_meijerg(self):
         import mpmath as mp
@@ -95,6 +91,17 @@ class TestMathUtil(unittest.TestCase):
         z = 5.0
         result = np.array([numeric_validation(z, v) for v in vs])
         print(result)
+
+    def test_numeric_derivative(self):
+        from scipy.special import kv
+        from scipy.misc import derivative
+        def numeric_validation(z=3.1, v=2.1):
+            numeric_diff = derivative(lambda v: kv(v, z), v, dx=1e-10)
+            return numeric_diff
+
+        vs = np.arange(100) / 10.0 + 0.01
+        z = 5.1 * np.ones_like(vs)
+        derivative(lambda v: kv(v, z), vs, dx=1e-10)
 
     def test_nanity(self):
         # indices: (tensor([0, 0, 0, 0]), tensor([241, 843, 932, 1158]))

@@ -310,7 +310,7 @@ class TimeSeriesTransformer(pl.LightningModule):
             'gamma': model_output['gamma'].abs().max(),
             'pc': model_output['pc'].abs().max(),
             'chi': model_output['chi'].abs().max(),
-            'ld': is_integer(model_output['ld'] * 2).sum().float(),
+            'ld': model_output['ld'].abs().max(),
         }
 
         ret = {
@@ -374,37 +374,37 @@ class TimeSeriesTransformer(pl.LightningModule):
         return {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m,
                 "log": log, 'progress_bar': bar, }
 
-    def backward(self, trainer, loss, optimizer, optimizer_idx: int):
-
-        # trainer.model.zero_grad()
-        # optimizer.zero_grad()
-
-        # def where_nan(metric):
-        #     return torch.isnan(metric) | torch.isinf(metric)
-        #
-        # nans = where_nan(loss.grad)
-        # print(nans.sum())
-        loss.backward()
-        grads = dict((k, v.grad) for k, v in self.__debug_ctx.items())
-
-        def print_first(x):
-            for k, v in x.items():
-                print(f"{k}: {v}")
-                # print(f"{k}: {v.reshape(-1).max()}")
-
-        # print_first(grads)
-        nan_indice = torch.isnan(grads['ld'])
-        print(f'invalid indices: {torch.where(nan_indice)}')
-
-        nan_value = dict((k, v[nan_indice]) for k, v in self.__debug_ctx.items())
-
-        print_first(nan_value)
-
-        # np.savez(
-        #     '/tmp/debug.npz',
-        #     **grads
-        # )
-        # exit(0)
+    # def backward(self, trainer, loss, optimizer, optimizer_idx: int):
+    #
+    #     # trainer.model.zero_grad()
+    #     # optimizer.zero_grad()
+    #
+    #     # def where_nan(metric):
+    #     #     return torch.isnan(metric) | torch.isinf(metric)
+    #     #
+    #     # nans = where_nan(loss.grad)
+    #     # print(nans.sum())
+    #     loss.backward()
+    #     grads = dict((k, v.grad) for k, v in self.__debug_ctx.items())
+    #
+    #     def print_first(x):
+    #         for k, v in x.items():
+    #             print(f"{k}: {v}")
+    #             # print(f"{k}: {v.reshape(-1).max()}")
+    #
+    #     # print_first(grads)
+    #     nan_indice = torch.isnan(grads['ld'])
+    #     print(f'invalid indices: {torch.where(nan_indice)}')
+    #
+    #     nan_value = dict((k, v[nan_indice]) for k, v in self.__debug_ctx.items())
+    #
+    #     print_first(nan_value)
+    #
+    #     # np.savez(
+    #     #     '/tmp/debug.npz',
+    #     #     **grads
+    #     # )
+    #     # exit(0)
 
     def configure_optimizers(self):
         from torch.optim import Adam
