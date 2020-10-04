@@ -54,9 +54,9 @@ class TimeSeriesTransformer(pl.LightningModule):
             '''
             self.model_output_projection_dim = 4
             ld = 0.5
-            self.output_header = lambda mu, ln_gamma, ln_pc, ln_chi: {
+            self.output_header = lambda mu, gamma, ln_pc, ln_chi: {
                 'mu': mu.squeeze(-1),
-                'gamma': ln_gamma.exp().squeeze(-1),
+                'gamma': gamma.squeeze(-1),
                 'pc': ln_pc.exp().squeeze(-1),
                 'chi': ln_chi.exp().squeeze(-1),
                 'ld': torch.zeros_like(ln_chi).squeeze(-1) + ld
@@ -274,10 +274,15 @@ class TimeSeriesTransformer(pl.LightningModule):
                 group=inputs["group"]
             )
         log = {
-            "train_loss": loss_output["train_loss"]
-            , "valid_loss": loss_output["valid_loss"]
-            , "train_mse": metric_output["train_loss"]
-            , "val_mse": metric_output["valid_loss"]
+            "train_loss": loss_output["train_loss"],
+            "valid_loss": loss_output["valid_loss"],
+            "train_mse": metric_output["train_loss"],
+            "val_mse": metric_output["valid_loss"],
+            'mu': model_output['mu'].abs().max(),
+            'gamma': model_output['gamma'].abs().max(),
+            'pc': model_output['pc'].abs().max(),
+            'chi': model_output['chi'].abs().max(),
+            'ld': model_output['ld'].abs().max(),
         }
 
         ret = {
@@ -285,6 +290,11 @@ class TimeSeriesTransformer(pl.LightningModule):
             "valid_loss": loss_output["valid_loss"],
             "train_mse": metric_output["train_loss"],
             "val_mse": metric_output["valid_loss"],
+            'mu': log['mu'],
+            'gamma': log['gamma'],
+            'pc': log['pc'],
+            'chi': log['chi'],
+            'ld': log['ld'],
             "log": log,
         }
 
@@ -298,15 +308,33 @@ class TimeSeriesTransformer(pl.LightningModule):
             return torch.stack([x[key] for x in outputs]).mean()
 
         keys = ["loss", "valid_loss",
-                "train_mse", 'val_mse'
+                "train_mse", 'val_mse',
+
+                'mu',
+                'gamma',
+                'pc',
+                'chi',
+                'ld'
                 ]
         res = [_agg_by_key(key) for key in keys]
-        train_loss, valid_loss, t_m, v_m = res
+        train_loss, valid_loss, t_m, v_m = res[:4]
+        (mu,
+         gamma,
+         pc,
+         chi,
+         ld) = res[4:]
+
         log = {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m}
         logger.info(f'step {self.global_step} epoch {self.current_epoch} '
                     f'tr: {train_loss:.6f}, va: {valid_loss:.6f}, train_mse:,{t_m:.6f} '
                     f', val_mse:,{v_m:.6f}')
-        bar = {"val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m}
+        bar = {"val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m,
+               'mu': mu,
+               'gamma': gamma,
+               'pc': pc,
+               'chi': chi,
+               'ld': ld
+               }
 
         return {"loss": train_loss, "val_loss": valid_loss, "train_mse": t_m, "val_mse": v_m,
                 "log": log, 'progress_bar': bar, }
